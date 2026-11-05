@@ -1,2 +1,3 @@
 #!/bin/sh
 python scripts/doc_guard.py || { echo "doc_guard 未通过：文档里出现了记账内容、历史目录或断链。"; exit 1; }
+python scripts/spec_check.py || { echo "spec_check 未通过：要求编号重复、指向不存在的编号，或者两个在研变更改到了同一条要求。"; exit 1; }

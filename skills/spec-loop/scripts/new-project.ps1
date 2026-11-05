@@ -4,11 +4,12 @@
 
 .DESCRIPTION
   新建模式：目标目录必须不存在或为空。脚本生成 AGENTS.md、CLAUDE.md、specs/backlog.md、
-  docs/README.md、scripts/doc_guard.py、.githooks/pre-commit、doc-guard CI 和 .gitattributes，
+  docs/README.md、docs/requirements/README.md、scripts/doc_guard.py、scripts/spec_check.py、
+  .githooks/pre-commit、doc-guard CI 和 .gitattributes，
   然后执行 git init、设置 hooksPath，并做第一次提交。
 
   接入模式（-Adopt）：目标必须是已有的 Git 仓库。只补缺失的文件，已有文件一律不覆盖，也不提交。
-  .gitattributes 已存在时只追加 hook 的换行规则。最后运行一次 doc_guard，报出需要清理的旧文档。
+  .gitattributes 已存在时只追加 hook 的换行规则。最后运行 doc_guard 和 spec_check，报出检查结果。
 
 .EXAMPLE
   pwsh -NoProfile -File new-project.ps1 -Path D:\code\my-app -Name "My App"
@@ -78,6 +79,8 @@ Write-ProjectFile 'CLAUDE.md' (Read-Text (Join-Path $skeleton 'CLAUDE.md'))
 Write-ProjectFile 'specs/backlog.md' (Read-Text (Join-Path $templates 'backlog.md'))
 Write-ProjectFile 'docs/README.md' (Read-Text (Join-Path $skeleton 'docs/README.md'))
 Write-ProjectFile 'scripts/doc_guard.py' (Read-Text (Join-Path $PSScriptRoot 'doc_guard.py'))
+Write-ProjectFile 'scripts/spec_check.py' (Read-Text (Join-Path $PSScriptRoot 'spec_check.py'))
+Write-ProjectFile 'docs/requirements/README.md' (Read-Text (Join-Path $skeleton 'docs/requirements/README.md'))
 Write-ProjectFile '.githooks/pre-commit' (Read-Text (Join-Path $skeleton '.githooks/pre-commit'))
 Write-ProjectFile '.github/workflows/doc-guard.yml' (Read-Text (Join-Path $skeleton '.github/workflows/doc-guard.yml'))
 
@@ -100,9 +103,12 @@ Invoke-Git config core.hooksPath .githooks
 
 & python (Join-Path $root 'scripts/doc_guard.py') --root $root
 $guardExit = $LASTEXITCODE
+& python (Join-Path $root 'scripts/spec_check.py') --root $root
+$specExit = $LASTEXITCODE
 
 if (-not $Adopt) {
   if ($guardExit -ne 0) { throw '新项目骨架没有通过 doc_guard，请检查模板。' }
+  if ($specExit -ne 0) { throw '新项目骨架没有通过 spec_check，请检查模板。' }
   Invoke-Git add -A
   Invoke-Git update-index --chmod=+x .githooks/pre-commit
   Invoke-Git commit -q -m 'chore: 初始化 spec-loop 项目骨架' -m '为什么：从第一天起使用 spec-loop 的短入口、意图卡和防回流检查。'
@@ -112,6 +118,7 @@ Write-Host "项目：$root"
 Write-Host ('新建：' + $(if ($created.Count) { $created -join '、' } else { '无' }))
 Write-Host ('已存在、未覆盖：' + $(if ($skipped.Count) { $skipped -join '、' } else { '无' }))
 Write-Host "doc_guard 退出码：$guardExit"
+Write-Host "spec_check 退出码：$specExit"
 if ($Adopt) {
   Write-Host '下一步：填写 AGENTS.md 里的项目事实；按上面 doc_guard 报出的问题清理旧文档；然后 git add -A，运行 git update-index --chmod=+x .githooks/pre-commit，再提交。'
 } else {

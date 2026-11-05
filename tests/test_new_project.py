@@ -47,7 +47,9 @@ SKELETON = [
     "CLAUDE.md",
     "specs/backlog.md",
     "docs/README.md",
+    "docs/requirements/README.md",
     "scripts/doc_guard.py",
+    "scripts/spec_check.py",
     ".githooks/pre-commit",
     ".github/workflows/doc-guard.yml",
     ".gitattributes",
@@ -64,6 +66,7 @@ def test_new_project_creates_skeleton_and_first_commit(tmp_path):
     assert (target / "AGENTS.md").read_text(encoding="utf-8").startswith("# Demo")
     assert (target / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
     assert b"\r\n" not in (target / ".githooks" / "pre-commit").read_bytes()
+    assert "spec_check" in (target / ".githooks" / "pre-commit").read_text(encoding="utf-8")
 
     assert git(target, "config", "core.hooksPath").stdout.strip() == ".githooks"
     assert len(git(target, "log", "--oneline").stdout.strip().splitlines()) == 1
@@ -96,6 +99,15 @@ def test_adopt_keeps_existing_files_and_does_not_commit(tmp_path):
     assert git(repo, "init", "-q", "-b", "main").returncode == 0
     (repo / "AGENTS.md").write_text("# 已有入口\n", encoding="utf-8")
     (repo / ".gitattributes").write_text("*.png binary\n", encoding="utf-8")
+    existing = {
+        ".githooks/pre-commit": "#!/bin/sh\nexit 0\n",
+        "docs/README.md": "# Existing docs\n",
+        ".github/workflows/doc-guard.yml": "name: Existing CI\n",
+    }
+    for relative, content in existing.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content.encode("utf-8"))
 
     result = run_script("-Path", str(repo), "-Adopt")
 
@@ -103,6 +115,10 @@ def test_adopt_keeps_existing_files_and_does_not_commit(tmp_path):
     assert (repo / "AGENTS.md").read_text(encoding="utf-8") == "# 已有入口\n"
     assert (repo / "CLAUDE.md").is_file()
     assert (repo / "scripts" / "doc_guard.py").is_file()
+    assert (repo / "scripts" / "spec_check.py").is_file()
+    assert (repo / "docs" / "requirements" / "README.md").is_file()
+    for relative, content in existing.items():
+        assert (repo / relative).read_bytes() == content.encode("utf-8")
     assert (repo / ".gitattributes").read_text(encoding="utf-8").splitlines() == [
         "*.png binary",
         ".githooks/** text eol=lf",

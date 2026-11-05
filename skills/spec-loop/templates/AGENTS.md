@@ -10,7 +10,8 @@
 
 | 任务 | 读 |
 |---|---|
-| 做或续做一个功能 | `specs/<feature>/spec.md` + spec-loop 技能 |
+| 做或续做一个功能 | `specs/<feature>/spec.md`（框架级再读同目录的 `design.md`）+ spec-loop 技能 |
+| 查某个能力的现行要求 | `docs/requirements/<能力>.md` |
 | 改某个代码目录 | 该目录的 README |
 | 找零散的待做事项 | `specs/backlog.md` |
 | <领域任务> | `docs/<文档>.md`，先看顶部"读我" |
@@ -19,6 +20,7 @@
 
 - <测试、类型检查、构建命令>
 - 文档防回流：`python scripts/doc_guard.py`
+- 要求编号检查：`python scripts/spec_check.py`（加 `--report` 可查看未被测试引用的要求和演示要求清单）
 - 新克隆后执行一次：`git config core.hooksPath .githooks`
 
 ## 4. 代码地图
@@ -42,6 +44,7 @@
 ## 7. 开发流程与文档规则
 
 - 功能开发按 spec-loop 技能进行。本项目不使用 OpenSpec，也不生成 superpowers 的设计或计划文件。
-- 文档只写现在：不写决策编号、日期、批准记录、模型和通道、哈希，也不写"原为 / 已取代 / 移植自"。为什么这么做，写进提交说明或 PR。
+- 文档只写现在：不写决策编号、日期、批准记录、模型和通道、哈希，也不写"原为 / 已取代 / 移植自"。为什么这么做，写进提交说明或 PR；`docs/architecture.md` 里的关键结构决定可以附一句现行理由。
+- 可验证的行为要求只写在 `docs/requirements/` 下的能力规格里；其他文档引用编号，不重复写要求。
 - 不新建 decisions、maintenance、history、handoff 一类的文件或目录，doc_guard 会拦截。
 - 做功能时不改本节，也不改 spec-loop。觉得流程不顺，在回复里告诉用户。

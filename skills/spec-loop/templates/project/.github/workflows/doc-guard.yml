@@ -17,3 +17,5 @@ jobs:
           python-version: "3.x"
       - name: Doc guard
         run: python scripts/doc_guard.py
+      - name: Spec check
+        run: python scripts/spec_check.py
