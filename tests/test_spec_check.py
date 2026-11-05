@@ -1,9 +1,15 @@
 """Behavior checks for requirement IDs, in-flight changes and code references."""
 
 import json
+import os
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
+import spec_check
 from spec_check import main, report, scan
 
 
@@ -63,9 +69,88 @@ def test_card_targets(tmp_path):
 ## 其他
 - 修改 DEMO-99：outside section
 """)
-    assert Counter(f.rule for f in scan(tmp_path)) == {
+    findings = scan(tmp_path)
+    assert Counter(f.rule for f in findings) == {
         "unknown-target": 3, "id-exists": 1, "unknown-code": 1,
     }
+    assert next(f.message for f in findings if f.line == 3) == "目标编号不存在：DEMO-9"
+    assert next(f.message for f in findings if f.line == 7) == "新增要求须使用代号-数字：BBB:AC-002-1"
+
+
+def test_merged_changes_require_heading_update(tmp_path, capsys):
+    requirements = write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n- DEMO-2：two\n")
+    card = write(tmp_path, "specs/change/spec.md", """# Change
+## 规格变化
+- 新增 DEMO-3：three
+- 修改 DEMO-1：updated
+- 删除 DEMO-2
+""")
+    write(tmp_path, "tests/test_demo.py", "# DEMO-1 DEMO-3\n")
+    assert scan(tmp_path) == []
+
+    requirements.write_text("代号：DEMO\n- DEMO-1：updated\n- DEMO-3：three\n", encoding="utf-8")
+    args = ["--root", str(tmp_path), "--json"]
+    assert main(args) == 1
+    findings = json.loads(capsys.readouterr().out)
+    assert [(f["rule"], f["line"]) for f in findings] == [("id-exists", 3), ("unknown-target", 5)]
+    hint = "（如果是本卡收尾已合并，把本节标题改为'## 规格变化（已合并）'）"
+    assert all(f["message"].endswith(hint) for f in findings)
+
+    card.write_text(card.read_text(encoding="utf-8").replace("## 规格变化", "## 规格变化（已合并）"),
+                    encoding="utf-8")
+    assert main(args) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert card.exists()
+
+
+def test_bom_in_requirements_and_card(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "\ufeff代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "specs/add/spec.md", "\ufeff## 规格变化\n- 新增 DEMO-2：two\n")
+    write(tmp_path, "tests/test_demo.py", "\ufeff# DEMO-1 DEMO-2\n")
+    assert scan(tmp_path) == []
+
+
+def test_malformed_change_bullets_reported_only_in_active_section(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
+    write(tmp_path, "specs/change/spec.md", """# Change
+## 范围
+- 做：导出
+## 规格变化
+- 新增：DEMO-1
+- 修改 DEMO-one：bad ID
+- 删除
+- 新增 DEMO-2：valid
+  - 例：嵌套说明
+
+普通说明。
+## 规格变化（已合并）
+- 新增：DEMO-3
+## 其他
+- 不做：上传
+""")
+    assert [(f.rule, f.path, f.line) for f in scan(tmp_path)] == [
+        ("bad-change", "specs/change/spec.md", 5),
+        ("bad-change", "specs/change/spec.md", 6),
+        ("bad-change", "specs/change/spec.md", 7),
+    ]
+
+
+@pytest.mark.parametrize("args", [[], ["--json"], ["--json", "--report"]])
+def test_cli_outputs_utf8_with_legacy_stdio_encoding(tmp_path, args):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "tests/test_demo.py", "# DEMO-99\n")
+    result = subprocess.run(
+        [sys.executable, spec_check.__file__, "--root", str(tmp_path), *args],
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "gbk", "PYTHONUTF8": "0"},
+    )
+    assert result.returncode == 1
+    output = result.stdout.decode("utf-8")
+    assert "引用的编号不存在：DEMO-99" in output
+    if "--json" in args:
+        assert json.loads(output)[0]["rule"] == "dangling-ref"
+    if "--report" in args:
+        assert result.stderr.decode("utf-8").splitlines() == ["未被测试引用：DEMO-1"]
 
 
 def test_conflicting_cards(tmp_path):
@@ -123,7 +208,7 @@ def test_report_and_cli(tmp_path, capsys):
 """)
     write(tmp_path, "tests/t.py", "# DEMO-1\n")
     write(tmp_path, "src/demo.py", "# DEMO-2\n")
-    expected = ["未被测试引用：DEMO-2", "未被测试引用：DEMO-3", "演示要求：DEMO-3"]
+    expected = ["未被测试引用：DEMO-2", "演示要求：DEMO-3"]
     assert report(tmp_path) == expected
     assert main(["--root", str(tmp_path), "--report"]) == 0
     assert capsys.readouterr().out.splitlines() == expected
@@ -135,8 +220,8 @@ def test_report_and_cli(tmp_path, capsys):
 
     for name in ("test_demo.py", "demo_test.go", "demo.test.ts", "demo.spec.js",
                  "DemoTest.java", "DemoTests.cs", "DemoSpec.kt"):
-        test_path = write(tmp_path, f"src/{name}", "// DEMO-3\n")
-        assert report(tmp_path) == ["未被测试引用：DEMO-2", "演示要求：DEMO-3"]
+        test_path = write(tmp_path, f"src/{name}", "// DEMO-2\n")
+        assert report(tmp_path) == ["演示要求：DEMO-3"]
         test_path.unlink()
 
     write(tmp_path, "src/x.py", "# DEMO-99\n")

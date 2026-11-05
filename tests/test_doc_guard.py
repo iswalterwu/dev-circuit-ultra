@@ -1,7 +1,12 @@
 """Behavior checks for the reusable documentation guard."""
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 import doc_guard
 from doc_guard import main, scan
@@ -120,6 +125,21 @@ def test_skipped_dirs(tmp_path: Path) -> None:
     write(tmp_path, "node_modules/p/README.md", "D-123\n")
 
     assert scan(tmp_path) == []
+
+
+@pytest.mark.parametrize("args", [[], ["--json"]])
+def test_cli_outputs_utf8_with_legacy_stdio_encoding(tmp_path, args):
+    write(tmp_path, "docs/a.md", "见 D-036\n")
+    result = subprocess.run(
+        [sys.executable, doc_guard.__file__, "--root", str(tmp_path), *args],
+        capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "gbk", "PYTHONUTF8": "0"},
+    )
+    assert result.returncode == 1
+    output = result.stdout.decode("utf-8")
+    assert "决策编号：D-036" in output
+    if "--json" in args:
+        assert json.loads(output)[0]["rule"] == "decision-id"
 
 
 def test_cli(tmp_path: Path, capsys) -> None:

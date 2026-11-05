@@ -20,7 +20,7 @@ def write(root, relative, text):
 
 def check(root, script, *args):
     return subprocess.run(
-        [sys.executable, "-X", "utf8", str(root / "scripts" / script), "--root", str(root), *args],
+        [sys.executable, str(root / "scripts" / script), "--root", str(root), *args],
         capture_output=True, text=True, encoding="utf-8",
     )
 
@@ -36,6 +36,7 @@ def test_walkthrough_normal_and_framework(tmp_path):
 - DEMO-1：导出当前一条记录。
   - 例：选中一条记录后导出，得到该记录。
   - 证明：src/test_demo.py
+- DEMO-3：导出后弹出旧版提示。
 """)
     write(root, "docs/requirements/sync.md", "# 同步能力\n代号：SYNC\n")
     ordinary = write(root, "specs/add-export/spec.md", """# add-export：扩充导出格式
@@ -56,6 +57,7 @@ def test_walkthrough_normal_and_framework(tmp_path):
 ## 规格变化
 - 新增 DEMO-2：支持 CSV 导出。例：选择 CSV 时生成带表头的 CSV。
 - 修改 DEMO-1：导出当前选中的全部记录。例：选中两条时导出两条。
+- 删除 DEMO-3
 
 ## 风险
 - 风险档：低。
@@ -176,18 +178,17 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
 - [同步能力](requirements/sync.md)：SYNC 要求。
 - [结构](architecture.md)：模块、契约与数据归属。
 """)
-    for path in (ordinary, framework, design):
-        path.unlink()
-    ordinary.parent.rmdir()
-    framework.parent.rmdir()
+    for card in (ordinary, framework):
+        card.write_text(card.read_text(encoding="utf-8")
+                        .replace("## 规格变化", "## 规格变化（已合并）")
+                        .replace("[ ]", "[x]"), encoding="utf-8")
 
     assert "- DEMO-1：导出当前选中的全部记录。" in demo.read_text(encoding="utf-8")
     assert "- DEMO-2：支持 CSV 导出。" in demo.read_text(encoding="utf-8")
+    assert "DEMO-3" not in demo.read_text(encoding="utf-8")
     assert "- SYNC-1：同步成功后可读回相同的记录。" in sync.read_text(encoding="utf-8")
     assert "保持单一数据归属" in architecture.read_text(encoding="utf-8")
-    assert not list((root / "specs").glob("*/spec.md"))
-    assert not ordinary.parent.exists()
-    assert not framework.parent.exists()
+    assert all(path.exists() for path in (ordinary, framework, design))
     for script in ("doc_guard.py", "spec_check.py"):
         result = check(root, script)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -195,8 +196,31 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
     assert result.returncode == 0
     assert result.stdout == ""
 
+    assert git(root, "config", "core.hooksPath").stdout.strip() == ".githooks"
+    assert git(root, "add", "-A").returncode == 0
+    result = git(root, "commit", "-m", "test: finish add-export and new-sync",
+                 "-m", "为什么：验证卡和设计仍在时，最后一刀可通过两项 hook 检查。")
+    assert result.returncode == 0, result.stdout + result.stderr
+    last_slice = git(root, "rev-parse", "HEAD").stdout.strip()
+    for card in (ordinary, framework):
+        committed = git(root, "show", f"HEAD:{card.relative_to(root).as_posix()}")
+        assert committed.returncode == 0
+        assert "## 规格变化（已合并）" in committed.stdout
+    assert git(root, "status", "--short").stdout.strip() == ""
+
+    for path in (ordinary, framework, design):
+        path.unlink()
+    ordinary.parent.rmdir()
+    framework.parent.rmdir()
+    assert not list((root / "specs").glob("*/spec.md"))
+    assert not ordinary.parent.exists()
+    assert not framework.parent.exists()
+    for script in ("doc_guard.py", "spec_check.py"):
+        result = check(root, script)
+        assert result.returncode == 0, result.stdout + result.stderr
     assert git(root, "add", "-A").returncode == 0
     result = git(root, "commit", "-m", "test: close add-export and new-sync",
-                 "-m", "为什么：验证规格变化与结构决定合并后可通过两项 hook 检查。")
+                 "-m", "为什么：验收后单独删除卡和设计，两项 hook 检查仍然通过。")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert git(root, "rev-parse", "HEAD^").stdout.strip() == last_slice
     assert git(root, "status", "--short").stdout.strip() == ""

@@ -10,6 +10,7 @@ import argparse
 import fnmatch
 import json
 import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -164,6 +165,7 @@ def scan(root: Path) -> list[Finding]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Check project documentation for forbidden content")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: current directory)")
     parser.add_argument("--json", action="store_true", help="print findings as JSON")
