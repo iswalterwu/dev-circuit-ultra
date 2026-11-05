@@ -1,0 +1,2 @@
+#!/bin/sh
+python scripts/doc_guard.py || { echo "doc_guard 未通过：文档里出现了记账内容、历史目录或断链。"; exit 1; }
