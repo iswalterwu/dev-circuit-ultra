@@ -61,7 +61,13 @@
     "harness_untracked": [
       ".bench/"
     ],
-    "total_docs_lines": 132
+    "total_docs_lines": 132,
+    "input_tokens": 26444,
+    "output_tokens": 45864,
+    "cache_read_tokens": 1891968,
+    "input_output_tokens": 72308,
+    "total_tokens": 1964276,
+    "docs_files": 2
   },
   "openspec": {
     "seconds": 421.0,
@@ -87,7 +93,31 @@
       "openspec/specs/expense-report/"
     ],
     "uncommitted_deliverables": 11,
-    "total_docs_lines": 273
+    "total_docs_lines": 273,
+    "input_tokens": 57891,
+    "output_tokens": 55446,
+    "cache_read_tokens": 3678333,
+    "input_output_tokens": 113337,
+    "total_tokens": 3791670,
+    "docs_files": 3
   },
-  "caveat": "n=1; judge scores are artifact judgments, not a statistical benchmark. Dev finished with 1 commit (only harness .bench/ outside the copy); OpenSpec left 11 uncommitted entries. The judge saw git status through EVIDENCE, not .git."
+  "caveat": "n=1; judge scores are artifact judgments, not a statistical benchmark. Dev finished with 1 commit (only harness .bench/ outside the copy); OpenSpec left 11 uncommitted entries. The judge saw git status through EVIDENCE, not .git.",
+  "savings": {
+    "seconds": 12.1,
+    "seconds_pct": 2.9,
+    "cost_usd": 0.03165,
+    "cost_pct": 29.9,
+    "input_output_tokens": 41029,
+    "input_output_tokens_pct": 36.2,
+    "cache_read_tokens": 1786365,
+    "cache_read_tokens_pct": 48.6,
+    "total_tokens": 1827394,
+    "total_tokens_pct": 48.2,
+    "docs_files": 1,
+    "docs_lines": 141,
+    "docs_lines_pct": 51.6,
+    "turns": 11,
+    "turns_pct": 22,
+    "uncommitted_deliverables": 11
+  }
 }

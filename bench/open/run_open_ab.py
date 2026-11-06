@@ -21,9 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BENCH))
 
-from run_ab import (  # noqa: E402
+from _harness import (  # noqa: E402
     BASE_TAG,
     changed,
     fill,

@@ -108,6 +108,24 @@ demo 在临时目录里建一个项目和一个项目外的账本，演示：设
 
 需要审计轨迹、跨人交接、跨仓库规划时，OpenSpec 这类流程更合适；一个人带 agent 快速迭代时，Dev-circuit-ultra 更轻。
 
+## 最新 A/B：省在哪
+
+同一个开放任务、每个 skill 一个会话、最终交付物盲评。n=1；看差异和限制，不要当成普遍结论。
+
+| 相对 OpenSpec | Dev-circuit-ultra | OpenSpec | 差异 |
+|---|---:|---:|---:|
+| 盲评总分（30） | **27** | 26 | +1 |
+| 墙钟时间 | **408.9 s** | 421.0 s | −12.1 s（−2.9%） |
+| 模型成本 | **$0.0743** | $0.1060 | −$0.0317（−29.9%） |
+| 输入 + 输出 tokens | **72,308** | 113,337 | −41,029（−36.2%） |
+| 缓存读取 tokens | **1,891,968** | 3,678,333 | −1,786,365（−48.6%） |
+| assistant 轮次 | **39** | 50 | −11（−22%） |
+| 留存文档 | **2 个文件 / 132 行** | 3 个文件 / 273 行 | −1 个 / −141 行（−51.6%） |
+| 收尾 | **1 个提交，干净** | 0 个提交，11 条未提交 | 收尾 vs 未收尾 |
+| 项目测试 | 13 | **21** | 覆盖更窄（代价） |
+
+文档只计需求 + 使用说明 + OpenSpec 主规格，没计 OpenSpec 的 proposal/design/tasks。token 是实际观测用量，不是跨 provider 可比的账单。Dev 高 1 分主要来自干净收尾和 Decimal 合计；OpenSpec 的测试和错误处理更强。完整盲评见 [bench/README.md](bench/README.md)。
+
 <p align="center"><img src="assets/ab-comparison-zh.svg" alt="开放 A/B：Dev-circuit-ultra 对比 OpenSpec" width="100%"></p>
 
 <p align="center"><em>图 3：开放 A/B（n=1，最终交付物盲评）：Dev 27/30，OpenSpec 26/30。Dev 快 3%、成本低 30%，收尾干净；OpenSpec 测试更多、错误处理更完整，但留下 11 条未提交，且合计有浮点误差。不是普遍结论。细节见 <a href="bench/README.md">bench/README.md</a>。</em></p>
@@ -145,7 +163,7 @@ demo 在临时目录里建一个项目和一个项目外的账本，演示：设
 - [docs/dsh.md](docs/dsh.md)：DeepSeek Harness 安装、兼容性与 Store 发布
 - [docker/README.md](docker/README.md)：dev / archivist / ledger 容器参考
 - [demo/README.md](demo/README.md)：确定性的端到端演示
-- [bench/README.md](bench/README.md)：开放 A/B、盲评和历史基线
+- [bench/README.md](bench/README.md)：最新开放 A/B、盲评和节省数据
 
 ## 许可
 

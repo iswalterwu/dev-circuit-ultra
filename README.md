@@ -110,6 +110,24 @@ Full boundary and verification commands: [docs/ledger.md](docs/ledger.md) and [d
 
 OpenSpec is a better fit when you need an audit trail, cross-person handoff or cross-repo planning. Dev-circuit-ultra is lighter for one developer shipping continuously with an agent.
 
+## Latest A/B: what it saved
+
+One open brief, one session per skill, one blind review of the final repos. n=1; compare with the caveats, not as a general claim.
+
+| Against OpenSpec | Dev-circuit-ultra | OpenSpec | Difference |
+|---|---:|---:|---:|
+| Blind rubric (30) | **27** | 26 | +1 |
+| Wall time | **408.9 s** | 421.0 s | −12.1 s (−2.9%) |
+| Model cost | **$0.0743** | $0.1060 | −$0.0317 (−29.9%) |
+| Input + output tokens | **72,308** | 113,337 | −41,029 (−36.2%) |
+| Cache-read tokens | **1,891,968** | 3,678,333 | −1,786,365 (−48.6%) |
+| Assistant turns | **39** | 50 | −11 (−22%) |
+| Retained docs | **2 files / 132 lines** | 3 files / 273 lines | −1 file / −141 lines (−51.6%) |
+| Closeout | **1 commit, clean** | 0 commits, 11 uncommitted | clean vs unfinished |
+| Project tests | 13 | **21** | narrower coverage (tradeoff) |
+
+The doc count covers requirements + usage guide + the OpenSpec main spec; OpenSpec's proposal/design/tasks files are not included. The token figures are observed usage, not a provider-neutral bill. Dev's 1-point win comes mainly from clean closeout and Decimal totals; OpenSpec has stronger tests and error handling. See [bench/README.md](bench/README.md) for the full artifact review.
+
 <p align="center"><img src="assets/ab-comparison-en.svg" alt="Open A/B: Dev-circuit-ultra vs OpenSpec" width="100%"></p>
 
 <p align="center"><em>Figure 3. Open A/B (n=1, blind artifact review): Dev 27/30, OpenSpec 26/30. Dev was 3% faster, 30% cheaper, and finished clean; OpenSpec had more tests and stronger error handling but left 11 uncommitted entries and a float total. Not a general claim. See <a href="bench/README.md">bench/README.md</a>.</em></p>
@@ -147,7 +165,7 @@ Enough to cover the design's boundaries/contracts. Tests are evidence, not a dec
 - [docs/dsh.md](docs/dsh.md): DeepSeek Harness install, compatibility and Store publishing
 - [docker/README.md](docker/README.md): dev / archivist / ledger container reference
 - [demo/README.md](demo/README.md): deterministic end-to-end demo
-- [bench/README.md](bench/README.md): open A/B, blind rubric and historical baselines
+- [bench/README.md](bench/README.md): the latest open A/B, blind rubric and measured savings
 
 ## License
 
