@@ -7,15 +7,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills" / "spec-loop" / "scripts" / "new-project.ps1"
+SCRIPT = ROOT / "skills" / "dev-circuit-ultra" / "scripts" / "new-project.ps1"
 PWSH = shutil.which("pwsh")
 
 pytestmark = pytest.mark.skipif(PWSH is None, reason="需要 PowerShell 7（pwsh）")
 
 GIT_IDENTITY = {
-    "GIT_AUTHOR_NAME": "spec-loop test",
+    "GIT_AUTHOR_NAME": "dev-circuit-ultra test",
     "GIT_AUTHOR_EMAIL": "test@example.invalid",
-    "GIT_COMMITTER_NAME": "spec-loop test",
+    "GIT_COMMITTER_NAME": "dev-circuit-ultra test",
     "GIT_COMMITTER_EMAIL": "test@example.invalid",
 }
 

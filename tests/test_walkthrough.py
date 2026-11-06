@@ -49,6 +49,9 @@ def test_walkthrough_normal_and_framework(tmp_path):
 - 不做：远程上传。
 - 反目标：未选中的记录出现在结果里。
 
+## 设计
+- 导出函数接收选中的记录；CSV 生成带表头的结果；未选中的记录不进入结果。
+
 ## 结构影响
 - 动哪些模块：现有导出模块。
 - 新契约 / 新数据结构 / 全局机制：无。
@@ -80,6 +83,9 @@ def test_walkthrough_normal_and_framework(tmp_path):
 - 做：同步服务与内存仓库。
 - 不做：网络传输、磁盘持久化。
 - 反目标：界面直接写入仓库。
+
+## 设计
+- 入口调用同步服务；同步服务编排；内存仓库是唯一写入者；失败时整批不写入。
 
 ## 结构影响
 - 动哪些模块：调用入口、同步服务、内存仓库。
@@ -116,9 +122,8 @@ def test_walkthrough_normal_and_framework(tmp_path):
 - 数据归属：记录由内存仓库拥有，只有仓库写入。
 - 组件契约：sync(records) 返回写入数量；非法记录抛 ValueError；本地同步调用无远程超时；接口版本为 v1。
 
-## 关键决定
+## 关键决定（只写现行）
 - 决定：由内存仓库统一写入。理由：保持单一数据归属。
-  - 放弃的备选：入口直接写记录，会分散写入职责。
 
 ## 风险与缓解
 - 写入过程中部分失败 → 校验全部记录后一次替换。
@@ -199,7 +204,7 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
     assert git(root, "config", "core.hooksPath").stdout.strip() == ".githooks"
     assert git(root, "add", "-A").returncode == 0
     result = git(root, "commit", "-m", "test: finish add-export and new-sync",
-                 "-m", "为什么：验证卡和设计仍在时，最后一刀可通过两项 hook 检查。")
+                 "-m", "为什么：验证卡和设计仍在时，最后一个切片可通过两项 hook 检查。")
     assert result.returncode == 0, result.stdout + result.stderr
     last_slice = git(root, "rev-parse", "HEAD").stdout.strip()
     for card in (ordinary, framework):

@@ -161,3 +161,20 @@ def test_cli(tmp_path: Path, capsys) -> None:
     assert items[0]["rule"] == "decision-id"
 
     assert main(["--root", str(tmp_path / "absent")]) == 2
+
+
+def test_ledger_dir_and_old_design_phrases_flagged(tmp_path: Path) -> None:
+    write(tmp_path, "ledger/entries/x.jsonl", "{}\n")
+    write(
+        tmp_path,
+        "docs/a.md",
+        "旧版本原为 A\n后来已取代 B\n放弃的备选 C\n",
+    )
+
+    findings = scan(tmp_path)
+    assert {finding.rule for finding in findings} == {
+        "forbidden-path",
+        "bookkeeping-phrase",
+    }
+    assert any(finding.path == "ledger" for finding in findings)
+    assert sum(finding.rule == "bookkeeping-phrase" for finding in findings) == 3

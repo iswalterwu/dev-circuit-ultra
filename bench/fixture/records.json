@@ -1,0 +1,6 @@
+[
+  {"id": 1, "name": "Ada Lovelace", "amount": 1200},
+  {"id": 2, "name": "Grace \"Amazing\" Hopper", "amount": 950},
+  {"id": 3, "name": "Katherine Johnson", "amount": 1430},
+  {"id": 4, "name": "O'Brien, Inc.", "amount": 780}
+]

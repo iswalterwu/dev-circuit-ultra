@@ -1,0 +1,62 @@
+# Strong isolation reference:
+#   dev        -> project only; no ledger mount, no ledger credentials
+#   archivist  -> project read-only + ledger write
+#   ledger     -> ledger read-only for human query
+#
+# Set LEDGER_DIR to the private ledger repo created by new-ledger.ps1.
+# The ledger must be OUTSIDE the project directory.
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    user: dev
+    working_dir: /work
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ..:/work
+      - dev-home:/home/dev
+    environment:
+      HOME: /home/dev
+    command: sleep infinity
+
+  archivist:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    user: archivist
+    working_dir: /work
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ..:/work:ro
+      - ${LEDGER_DIR:?Set LEDGER_DIR to the private ledger repo}:/ledger
+      - archivist-home:/home/archivist
+    environment:
+      HOME: /home/archivist
+    command: sleep infinity
+
+  ledger:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    user: archivist
+    working_dir: /ledger
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${LEDGER_DIR:?Set LEDGER_DIR to the private ledger repo}:/ledger:ro
+      - ledger-home:/home/archivist
+    environment:
+      HOME: /home/archivist
+    command: sleep infinity
+
+volumes:
+  dev-home:
+  archivist-home:
+  ledger-home:

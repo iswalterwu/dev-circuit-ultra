@@ -10,7 +10,7 @@ if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
 $gitPath = $PSScriptRoot.Replace('\', '/')
 $version = & git -c "safe.directory=$gitPath" -C $PSScriptRoot rev-parse --short HEAD
 if ($LASTEXITCODE -ne 0 -or -not $version) {
-  throw "Could not read spec-loop Git version from $PSScriptRoot"
+  throw "Could not read dev-circuit-ultra Git version from $PSScriptRoot"
 }
 
 $skills = @(Get-ChildItem -LiteralPath $sourceRoot -Directory | Sort-Object Name)
@@ -23,6 +23,16 @@ foreach ($target in $targets) {
   if (-not (Test-Path -LiteralPath $target -PathType Container)) {
     if ($PSCmdlet.ShouldProcess($target, 'Create skill directory')) {
       New-Item -ItemType Directory -Path $target -Force | Out-Null
+    }
+  }
+
+  # Remove pre-rename skills so an old loop cannot be invoked by accident.
+  foreach ($legacyName in @('spec-loop', 'design-loop')) {
+    $legacy = Join-Path $target $legacyName
+    if (Test-Path -LiteralPath $legacy) {
+      if ($PSCmdlet.ShouldProcess($legacy, "Remove legacy skill '$legacyName'")) {
+        Remove-Item -LiteralPath $legacy -Recurse -Force
+      }
     }
   }
 
@@ -41,5 +51,5 @@ foreach ($target in $targets) {
     }
   }
 
-  Write-Host ('{0}: {1} skills synced (spec-loop {2})' -f $target, $skills.Count, $version)
+  Write-Host ('{0}: {1} skills synced (dev-circuit-ultra {2})' -f $target, $skills.Count, $version)
 }

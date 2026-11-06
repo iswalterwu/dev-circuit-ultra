@@ -1,103 +1,123 @@
-# spec-loop
+<img src="assets/banner-zh.svg" alt="Dev-circuit-ultra" width="100%">
 
-给 AI 编码 agent（Claude Code、Codex）用的轻量功能开发流程：
+# Dev-circuit-ultra
 
-**意图卡 → 只拆下一刀 → 实现 + 验证 → 独立审一次 → 验收合并**
+设计是源，账本在外。面向独立开发者的五步功能开发循环：一次一个切片，项目里只留现行设计。
 
-目标是快，而且不丢质量：
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="license"></a> <img src="https://img.shields.io/badge/python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/pwsh-7-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="pwsh 7"> <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20pi-6b4fbb?style=flat-square" alt="Claude Code / Codex / pi">
 
-- 用户在关键节点参与：框架级先澄清意图、选方案，再点头确认意图卡与设计；界面切片每刀验收，非界面可约定功能结束时一起验收。
-- 一件事只放一个地方：要做什么写在意图卡，现行要求写在能力规格，做没做对靠测试，为什么写在提交说明里。
-- 审代码，不审文档；一刀只审一次，复查最多一次。
-- 结构风险大的改动（新模块、新契约、核心数据变化等）即使没有用户可见变化，也走功能路线，按"框架级"处理：先澄清意图、比较方案，用户选定后写卡和设计、审一次结构，第一刀做骨架切片。普通功能不多走这些步骤。
-- 新能力在写卡时建好能力规格文件（可以只有文件头），在研卡新增的编号可从第一刀起被测试引用。最后一刀合并规格变化后，把卡里的节标题改为 `## 规格变化（已合并）`，保留卡片提交；验收后再单独提交 `close <feature>` 删除卡片。
-- 文档只写现在。防回流检查 `doc_guard` 只禁止记账内容、历史目录和断链；编号检查 `spec_check` 只检查要求编号是否完整一致。两者都从不要求文档里出现某句话，也不设任何数字上限。
+[落地后](#落地后) · [五步](#五步循环) · [快速开始](#快速开始) · [Demo](#demo) · [强隔离](#强隔离) · [和 OpenSpec 的区别](#和-openspec-的区别) · [English](README.en.md)
 
-完整规则见 [SKILL.md](skills/spec-loop/SKILL.md)，独立审核协议见 [reviewer.md](skills/spec-loop/reviewer.md)。
+Dev-circuit-ultra 是一套面向独立开发者的功能开发循环，以 skill 的形式加载到 Claude Code、Codex、pi 等编码 agent 中。它把功能开发拆成五步：设计澄清、单个切片、实现与验证、独立审核、收尾合并。
 
-## 内容
+它不维护 proposal、tasks 或 archive，也不保留长期 design 档案。**设计是唯一现行源**；设计变更时原地覆盖或删除旧内容；决策历史写进项目之外的私有账本，开发 agent 不读。
 
-| 路径 | 作用 |
-|---|---|
-| `skills/spec-loop/SKILL.md` | 流程本身，agent 按需加载 |
-| `skills/spec-loop/reviewer.md` | 独立审核协议：常规审核与结构审 |
-| `skills/spec-loop/templates/` | 意图卡、设计、能力规格、项目入口、文档"读我"块、待做池，以及新项目骨架（`project/`） |
-| `skills/spec-loop/scripts/doc_guard.py` | 防回流检查 |
-| `skills/spec-loop/scripts/spec_check.py` | 要求编号检查 |
-| `skills/spec-loop/scripts/new-project.ps1` | 新建项目，或给已有仓库接入 spec-loop |
-| `sync.ps1` | 把技能同步到 `~/.claude/skills` 和 `~/.agents/skills` |
-| `tests/` | doc_guard、spec_check 与 new-project 的测试 |
+## 落地后
 
-## 安装
+![落地后：两个目录，一条边界](assets/landed-zh.svg)
 
-需要 PowerShell 7（`pwsh`）、Git 和 Python 3。
+`D:\code\my-app` 是项目；`D:\ledgers\my-app` 是项目外的私有 git 账本。开发 agent 只读写项目，archivist 只追加账本，human 是唯一的桥。
 
-```
-git clone https://github.com/iswalterwu/spec-loop.git
-```
+- **开发侧**：现行设计、能力规格、代码、测试；没有账本挂载、路径或凭证。
+- **记账侧**：项目只读、账本追加；独立会话/容器；不把账本内容回流。
+- **human**：需要历史时，用 `dev-circuit-ledger` 查账本，生成最小 brief；原文不进开发上下文。
 
-先预演一遍，看看会做什么（不会实际改动）：
+## 五步循环
 
-```
-pwsh -NoProfile -File spec-loop/sync.ps1 -WhatIf
-```
+1. **设计澄清 + 意图卡**：读产品现行设计；问设计问题；选方案；写现行设计和规格变化。
+2. **单个切片**：只规划下一个能独立验收的端到端切片；实现/测试范围从设计推导。
+3. **实现 + 验证**：按设计写代码和测试；设计变了先改设计；跑提交前检查。
+4. **独立审核一次**：实现会话派独立审核子 agent；只给现行设计、diff、基线；复查最多一次。
+5. **验收 + 合并**：合并现行规格；删除卡/design；由 human/orchestrator 在项目外让 archivist 记录最终状态。
 
-确认无误后正式安装：
+## 快速开始
 
-```
-pwsh -NoProfile -File spec-loop/sync.ps1
+```powershell
+# 1. 同步 skill（Claude Code / agents 目录）
+pwsh -NoProfile -File sync.ps1
+
+# 2. 新建项目
+pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-project.ps1 `
+  -Path D:\code\my-app -Name "My App"
+
+# 3. 在项目外创建私有账本（不要放进项目）
+pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
+  -Path D:\ledgers\my-app
 ```
 
-## 新建项目
+然后在项目里用 `dev-circuit-ultra` skill 开始设计澄清。账本初始化是单独一步，项目里不会出现 `ledger/`。
 
-```
-pwsh -NoProfile -File $HOME/.claude/skills/spec-loop/scripts/new-project.ps1 -Path <新项目目录> -Name <项目名>
-```
+实现：Markdown skill + Python 3（`doc_guard` / `spec_check`）+ PowerShell 7（初始化）+ git；没有服务端组件，强隔离可选 Docker。
 
-脚本会做这些事：
+## Demo
 
-- 生成短入口 `AGENTS.md`，`CLAUDE.md` 只导入它；
-- 生成 `specs/backlog.md`、文档地图 `docs/README.md` 和能力规格目录 `docs/requirements/`；
-- 放入 `scripts/doc_guard.py`、`scripts/spec_check.py`、pre-commit hook 和 CI 检查；
-- 执行 `git init`，并做第一次提交。
-
-之后填好 AGENTS.md 里的项目事实（命令、代码地图、红线），就可以写第一张意图卡。新项目的第一个功能按框架级处理。
-
-## 接入已有项目
-
-```
-pwsh -NoProfile -File $HOME/.claude/skills/spec-loop/scripts/new-project.ps1 -Path <已有仓库> -Adopt
+```powershell
+python demo/run_demo.py
 ```
 
-- 只补缺失的文件，已有文件一律不覆盖，也不自动提交。
-- 最后会运行一次 doc_guard，报出需要清理的旧文档，例如决策记录目录、维护记录、计划文件和 history 目录。
-- 旧内容建议先打一个 Git tag 留档，再从工作树里移出；仍然有效的规则改写成现在时，并入 `docs/`。
-- 已有的要求不用一次性编号：新增或改动的要求进能力规格，旧文档里的规则改到时再迁入。
+demo 在临时目录里建一个项目和一个项目外的账本，演示：设计变更原地覆盖、被否方案只进账本、收尾删除卡片、`doc_guard` 拒绝项目内的 `ledger/`。它不调用 LLM；强隔离由 Docker 的挂载边界保证。详见 [demo/README.md](demo/README.md)。
 
-## 让 agent 默认使用
+## 强隔离
 
-在用户级配置里加一段说明。Claude Code 写在 `~/.claude/CLAUDE.md`，Codex 写在 `~/.codex/AGENTS.md`。大意是：
+只在 prompt 里写“不要读账本”**不算隔离**。要保证开发 agent 读不到，至少做到：
 
-- 功能开发、改行为或接口、多文件重构，默认使用 `spec-loop` 技能；
-- 项目 AGENTS.md 声明了别的流程，就按项目的走；项目里还有进行中的 OpenSpec 变更时，先用 OpenSpec 收尾；
-- spec-loop 已经包含提问、方案比较和构建者检查，在 spec-loop 项目里不调用 brainstorming、writing-plans、subagent-driven-development，也不生成 `docs/superpowers/` 下的文件；superpowers 的技巧类技能（TDD、调试、完成前验证）照常使用。
+| 级别 | 做法 | 能保证什么 |
+|---|---|---|
+| 弱 | prompt 约定 | 只能防误读 |
+| 中 | 账本放独立私有 repo，项目里不写路径 | 防误读，不防同用户翻找 |
+| **强** | dev / archivist 分容器或分 OS 用户；dev 不挂载账本、无凭证 | 开发进程没有读权限 |
 
-## 升级
+推荐强隔离。参考 [`docker/compose.yaml`](docker/compose.yaml)：
 
-在本仓库里拉取更新后，重新运行 `sync.ps1`。
+- `dev`：只挂项目；没有 `/ledger`；没有账本 remote 凭证；没有 Docker socket。
+- `archivist`：项目只读 + 账本读写；只追加，不改项目。
+- `ledger`：账本只读；供 human 查询。
+- 账本 remote 必须私有；凭证只在 archivist/human 环境。
 
-项目里复制的 `scripts/doc_guard.py` 和 `scripts/spec_check.py` 不会自动更新，需要时从技能目录复制过去覆盖。从 v0.2.0 升级的项目，还要：
-- 在 pre-commit hook 和 CI 里加上 spec_check；
-- 建 `docs/requirements/` 目录。
+完整边界和验证命令见 [docs/ledger.md](docs/ledger.md) 与 [docker/README.md](docker/README.md)。
 
-流程只在本仓库里改，不要在项目里改流程。
+## 和 OpenSpec 的区别
 
-## 测试
+| | OpenSpec | Dev-circuit-ultra |
+|---|---|---|
+| 设计 | proposal/design/tasks/spec delta，长期保留 | 现行设计；变更时覆盖/删除 |
+| 决策历史 | 写进 change/archive，越积越多 | 项目外私有账本，human only |
+| 开发 agent 读什么 | 可能读到整套历史 | 只读现行设计/代码 |
+| 收尾 | archive 保留 | 删除卡/design，只留现行 |
+| 目标 | 审计轨迹、跨人交接 | 快速迭代、上下文精简、防漂移 |
 
-```
-python -m pytest tests -q
-```
+需要审计轨迹、跨人交接、跨仓库规划时，OpenSpec 这类流程更合适；一个人带 agent 快速迭代时，Dev-circuit-ultra 更轻。
+
+## 常见问题
+
+**设计变了怎么办？**
+
+先改设计：原地覆盖/删除旧内容；再改代码/测试。旧决定和被否方案由 archivist 写进项目外账本，不留在设计里。
+
+**开发 agent 需要以前的设计怎么办？**
+
+停下来问 human。human 用 `dev-circuit-ledger` 查账本，生成最小 brief；只把 brief 里的现行约束交给开发 agent，不给账本原文。
+
+**账本会不会被开发 agent 读到？**
+
+强隔离下不会：dev 容器没有账本挂载、没有路径、没有凭证。弱/中隔离只是约定，不是保证。
+
+**为什么还要写设计？**
+
+设计是实现的依据，不是历史。没有现行设计，agent 只能猜；有了账本，猜错的原因可以回溯，但不需要把历史塞进上下文。
+
+**测试要写多少？**
+
+由设计里的边界/契约决定；测试是证据，不是决策档案。测试可以是一次性的；只有用户可见契约/回归值得长期保留。不写 test matrix。
+
+## 文档
+
+- [SKILL.md](skills/dev-circuit-ultra/SKILL.md)：完整流程、规则和模板说明
+- [docs/ledger.md](docs/ledger.md)：两条边界、强隔离和验证命令
+- [docker/README.md](docker/README.md)：dev / archivist / ledger 容器参考
+- [demo/README.md](demo/README.md)：确定性的端到端演示
+- [bench/README.md](bench/README.md)：改名前的 spec-loop 基线；不是新 workflow 的 benchmark
 
 ## 许可
 
-[MIT](LICENSE)
+MIT
