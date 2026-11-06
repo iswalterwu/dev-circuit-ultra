@@ -1,53 +1,55 @@
-<img src="assets/banner-zh.svg" alt="Dev-circuit-ultra" width="100%">
+<img src="assets/banner.svg" alt="Dev-circuit-ultra" width="100%">
 
 # Dev-circuit-ultra
 
-设计是源，账本在外。面向独立开发者的五步功能开发循环：一次一个切片，项目里只留现行设计。
+Design is the source. History stays outside. A five-step feature loop for independent developers: one slice at a time, only the current design in the project.
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="license"></a> <img src="https://img.shields.io/badge/python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/pwsh-7-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="pwsh 7"> <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20pi-6b4fbb?style=flat-square" alt="Claude Code / Codex / pi">
 
-[落地后](#落地后) · [五步](#五步循环) · [快速开始](#快速开始) · [Demo](#demo) · [强隔离](#强隔离) · [和 OpenSpec 的区别](#和-openspec-的区别) · [English](README.en.md)
+[After setup](#after-setup) · [Five steps](#five-steps) · [Quick start](#quick-start) · [Demo](#demo) · [Isolation](#isolation) · [How it differs from OpenSpec](#how-it-differs-from-openspec) · [Chinese](README.zh-CN.md)
 
-Dev-circuit-ultra 是一套面向独立开发者的功能开发循环，以 skill 的形式加载到 Claude Code、Codex、pi 等编码 agent 中。它把功能开发拆成五步：设计澄清、单个切片、实现与验证、独立审核、收尾合并。
+Dev-circuit-ultra is a feature development loop for independent developers, delivered as a skill for coding agents such as Claude Code, Codex and pi. It breaks a feature into five steps: design clarification, one slice, build and verify, independent review, and closeout.
 
-它不维护 proposal、tasks 或 archive，也不保留长期 design 档案。**设计是唯一现行源**；设计变更时原地覆盖或删除旧内容；决策历史写进项目之外的私有账本，开发 agent 不读。
+It does **not** maintain proposals, task lists or an archive, and it does not keep a long-lived design archive. **The current design is the only source.** When the design changes, the old text is overwritten or deleted; decision history lives in a private ledger **outside the project**, and the development agent never reads it.
 
-## 落地后
+## After setup
 
-![落地后：两个目录，一条边界](assets/landed-zh.svg)
+<p align="center"><img src="assets/after-setup-en.svg" alt="After setup: two directories, one boundary" width="100%"></p>
 
-`D:\code\my-app` 是项目；`D:\ledgers\my-app` 是项目外的私有 git 账本。开发 agent 只读写项目，archivist 只追加账本，human 是唯一的桥。
+<p align="center"><em>Figure 1. The project and the private ledger are separate; the dev container has no ledger mount.</em></p>
 
-- **开发侧**：现行设计、能力规格、代码、测试；没有账本挂载、路径或凭证。
-- **记账侧**：项目只读、账本追加；独立会话/容器；不把账本内容回流。
-- **human**：需要历史时，用 `dev-circuit-ledger` 查账本，生成最小 brief；原文不进开发上下文。
+`D:\code\my-app` is the project; `D:\ledgers\my-app` is a private git ledger outside it. The development agent only reads and writes the project; the archivist only appends to the ledger; the human is the only bridge.
 
-## 五步循环
+- **Development side**: current design, capability specs, code and tests; no ledger mount, path or credentials.
+- **Bookkeeping side**: project read-only, ledger append-only, in a separate session/container; nothing flows back.
+- **Human**: when history is needed, query with `dev-circuit-ledger` and get a minimal brief; the raw ledger never enters the development context.
 
-1. **设计澄清 + 意图卡**：读产品现行设计；问设计问题；选方案；写现行设计和规格变化。
-2. **单个切片**：只规划下一个能独立验收的端到端切片；实现/测试范围从设计推导。
-3. **实现 + 验证**：按设计写代码和测试；设计变了先改设计；跑提交前检查。
-4. **独立审核一次**：实现会话派独立审核子 agent；只给现行设计、diff、基线；复查最多一次。
-5. **验收 + 合并**：合并现行规格；删除卡/design；由 human/orchestrator 在项目外让 archivist 记录最终状态。
+## Five steps
 
-## 快速开始
+1. **Design clarification + intent card**: read the current product design; ask design questions; choose an approach; write the current design and spec delta.
+2. **One slice**: plan only the next end-to-end slice; derive implementation/test scope from the design.
+3. **Build + verify**: implement and test; change the design before changing code; run project checks.
+4. **One independent review**: the implementation session dispatches a reviewer subagent with the current design, diff and base; one re-check at most.
+5. **Accept + merge**: merge current requirements; delete the card/design; the human/orchestrator has the archivist record the final state outside the project.
+
+## Quick start
 
 ```powershell
-# 1. 同步 skill（Claude Code / agents 目录）
+# 1. Sync the skill (Claude Code / agents directories)
 pwsh -NoProfile -File sync.ps1
 
-# 2. 新建项目
+# 2. Create a project
 pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-project.ps1 `
   -Path D:\code\my-app -Name "My App"
 
-# 3. 在项目外创建私有账本（不要放进项目）
+# 3. Create the private ledger OUTSIDE the project
 pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
   -Path D:\ledgers\my-app
 ```
 
-然后在项目里用 `dev-circuit-ultra` skill 开始设计澄清。账本初始化是单独一步，项目里不会出现 `ledger/`。
+Then start with design clarification inside the project. The ledger is a separate step; no `ledger/` appears in the project.
 
-实现：Markdown skill + Python 3（`doc_guard` / `spec_check`）+ PowerShell 7（初始化）+ git；没有服务端组件，强隔离可选 Docker。
+Implementation: Markdown skill + Python 3 (`doc_guard` / `spec_check`) + PowerShell 7 (bootstrap) + git; no server component, Docker isolation optional.
 
 ## Demo
 
@@ -55,69 +57,69 @@ pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
 python demo/run_demo.py
 ```
 
-demo 在临时目录里建一个项目和一个项目外的账本，演示：设计变更原地覆盖、被否方案只进账本、收尾删除卡片、`doc_guard` 拒绝项目内的 `ledger/`。它不调用 LLM；强隔离由 Docker 的挂载边界保证。详见 [demo/README.md](demo/README.md)。
+The demo creates a throwaway project and an external ledger. It exercises destructive design edits, discarded ideas living only in the ledger, card deletion at closeout, and `doc_guard` rejecting a project `ledger/` directory. It does not call an LLM; strong isolation is the Docker mount boundary. See [demo/README.md](demo/README.md).
 
-## 强隔离
+## Isolation
 
-只在 prompt 里写“不要读账本”**不算隔离**。要保证开发 agent 读不到，至少做到：
+A prompt that says "do not read the ledger" is **not** isolation. To guarantee it:
 
-| 级别 | 做法 | 能保证什么 |
+| Level | Setup | Guarantee |
 |---|---|---|
-| 弱 | prompt 约定 | 只能防误读 |
-| 中 | 账本放独立私有 repo，项目里不写路径 | 防误读，不防同用户翻找 |
-| **强** | dev / archivist 分容器或分 OS 用户；dev 不挂载账本、无凭证 | 开发进程没有读权限 |
+| Weak | prompt convention | prevents accidental reads only |
+| Medium | private repo outside the project; no path in project | prevents accidental reads, not a determined same-user process |
+| **Strong** | separate containers/OS users; dev has no ledger mount or credentials | the dev process has no read permission |
 
-推荐强隔离。参考 [`docker/compose.yaml`](docker/compose.yaml)：
+Strong isolation is recommended. See [`docker/compose.yaml`](docker/compose.yaml):
 
-- `dev`：只挂项目；没有 `/ledger`；没有账本 remote 凭证；没有 Docker socket。
-- `archivist`：项目只读 + 账本读写；只追加，不改项目。
-- `ledger`：账本只读；供 human 查询。
-- 账本 remote 必须私有；凭证只在 archivist/human 环境。
+- `dev`: project only; no `/ledger`; no ledger remote credentials; no Docker socket.
+- `archivist`: project read-only + ledger writable; append-only; no product edits.
+- `ledger`: ledger read-only; for human queries.
+- The ledger remote must be private; credentials only in the archivist/human environment.
 
-完整边界和验证命令见 [docs/ledger.md](docs/ledger.md) 与 [docker/README.md](docker/README.md)。
+Full boundary and verification commands: [docs/ledger.md](docs/ledger.md) and [docker/README.md](docker/README.md).
 
-## 和 OpenSpec 的区别
+## How it differs from OpenSpec
 
 | | OpenSpec | Dev-circuit-ultra |
 |---|---|---|
-| 设计 | proposal/design/tasks/spec delta，长期保留 | 现行设计；变更时覆盖/删除 |
-| 决策历史 | 写进 change/archive，越积越多 | 项目外私有账本，human only |
-| 开发 agent 读什么 | 可能读到整套历史 | 只读现行设计/代码 |
-| 收尾 | archive 保留 | 删除卡/design，只留现行 |
-| 目标 | 审计轨迹、跨人交接 | 快速迭代、上下文精简、防漂移 |
+| Design | proposal/design/tasks/spec delta, kept over time | current design; overwrite/delete on change |
+| Decision history | in change/archive, growing | external private ledger, human only |
+| What the dev agent reads | potentially the whole history | current design/code only |
+| Closeout | archive retained | card/design deleted; current state only |
+| Goal | audit trail, cross-person handoff | fast iteration, lean context, no drift |
 
-需要审计轨迹、跨人交接、跨仓库规划时，OpenSpec 这类流程更合适；一个人带 agent 快速迭代时，Dev-circuit-ultra 更轻。
+OpenSpec is a better fit when you need an audit trail, cross-person handoff or cross-repo planning. Dev-circuit-ultra is lighter for one developer shipping continuously with an agent.
 
-## 常见问题
+## FAQ
 
-**设计变了怎么办？**
+**What if the design changes?**
 
-先改设计：原地覆盖/删除旧内容；再改代码/测试。旧决定和被否方案由 archivist 写进项目外账本，不留在设计里。
+Change the design first: overwrite/delete the old text; then code/tests. The archivist records the old decision and rejected options in the external ledger.
 
-**开发 agent 需要以前的设计怎么办？**
+**What if the dev agent needs an old decision?**
 
-停下来问 human。human 用 `dev-circuit-ledger` 查账本，生成最小 brief；只把 brief 里的现行约束交给开发 agent，不给账本原文。
+Stop and ask the human. The human queries the ledger with `dev-circuit-ledger`, gets a minimal brief, and passes only the current constraints to the dev agent.
 
-**账本会不会被开发 agent 读到？**
+**Can the dev agent read the ledger?**
 
-强隔离下不会：dev 容器没有账本挂载、没有路径、没有凭证。弱/中隔离只是约定，不是保证。
+Not under strong isolation: no mount, no path, no credentials. Weak/medium setups are conventions, not guarantees.
 
-**为什么还要写设计？**
+**Why keep a design at all?**
 
-设计是实现的依据，不是历史。没有现行设计，agent 只能猜；有了账本，猜错的原因可以回溯，但不需要把历史塞进上下文。
+The design is the implementation basis, not a history. Without it the agent guesses; the ledger explains past guesses to the human, not to the agent.
 
-**测试要写多少？**
+**How many tests?**
 
-由设计里的边界/契约决定；测试是证据，不是决策档案。测试可以是一次性的；只有用户可见契约/回归值得长期保留。不写 test matrix。
+Enough to cover the design's boundaries/contracts. Tests are evidence, not a decision archive; disposable tests are fine, only user-visible contract/regression tests need to stay. No test matrix.
 
-## 文档
+## Docs
 
-- [SKILL.md](skills/dev-circuit-ultra/SKILL.md)：完整流程、规则和模板说明
-- [docs/ledger.md](docs/ledger.md)：两条边界、强隔离和验证命令
-- [docker/README.md](docker/README.md)：dev / archivist / ledger 容器参考
-- [demo/README.md](demo/README.md)：确定性的端到端演示
-- [bench/README.md](bench/README.md)：改名前的 spec-loop 基线；不是新 workflow 的 benchmark
+- [SKILL.md](skills/dev-circuit-ultra/SKILL.md): full workflow, rules and templates
+- [docs/ledger.md](docs/ledger.md): boundaries, isolation and verification commands
+- [docker/README.md](docker/README.md): dev / archivist / ledger container reference
+- [demo/README.md](demo/README.md): deterministic end-to-end demo
+- [bench/README.md](bench/README.md): pre-rename spec-loop baseline; not a benchmark of the new workflow
 
-## 许可
+## License
 
 MIT
