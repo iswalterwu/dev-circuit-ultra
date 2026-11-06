@@ -2,7 +2,9 @@
 
 # Dev-circuit-ultra
 
-通过更少的上下文占用实现增效减负，一个去掉繁琐流程的开发loop。
+更少上下文，更少流程，更快交付。
+
+面向编码 agent 的设计驱动五步开发循环。
 
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="license"></a> <img src="https://img.shields.io/badge/python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/pwsh-7-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="pwsh 7"> <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20pi%20%C2%B7%20DeepSeek%20Harness-6b4fbb?style=flat-square" alt="Claude Code / Codex / pi / DeepSeek Harness">
 
