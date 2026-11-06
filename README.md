@@ -28,14 +28,14 @@ It does **not** maintain proposals, task lists or an archive, and it does not ke
 
 ## Five steps
 
-<p align="center"><img src="assets/five-steps-en.svg" alt="Five steps: design clarification, one slice, build and verify, review once, closeout" width="100%"></p>
+<p align="center"><img src="assets/five-steps-en.svg" alt="Five steps: design clarification, one slice, build and verify, independent review, closeout" width="100%"></p>
 
 <p align="center"><em>Figure 2. The five-step loop: current design in, history out.</em></p>
 
 1. **Design clarification + intent card**: read the current product design; ask design questions; choose an approach; write the current design and spec delta.
 2. **One slice**: plan only the next end-to-end slice; derive implementation/test scope from the design.
 3. **Build + verify**: implement and test; change the design before changing code; run project checks.
-4. **One independent review**: the implementation session dispatches a reviewer subagent with the current design, diff and base; one re-check at most.
+4. **Independent review**: normal features get one final review; framework-level changes get one structural review before code plus one final review. The reviewer sees the current design, diff and base; one re-check at most.
 5. **Accept + merge**: merge current requirements; delete the card/design; the human/orchestrator has the archivist record the final state outside the project.
 
 ## Quick start

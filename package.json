@@ -1,7 +1,7 @@
 {
   "name": "dev-circuit-ultra",
   "version": "0.1.0",
-  "description": "Less context. Less ceremony. More shipping. A development loop with the ceremony removed.",
+  "description": "Less context. Less ceremony. More shipping. A design-first five-step loop for coding agents.",
   "type": "module",
   "main": "index.js",
   "exports": {
