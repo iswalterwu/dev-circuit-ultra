@@ -1,6 +1,13 @@
 ---
 name: dev-circuit-ledger
 description: dev-circuit-ultra 的 human-only 账本查询 agent。只读私有账本，回答 human 的回溯问题，生成最小 brief；不写项目、不改代码、不把原始账本交给开发 agent。用于“当时为什么这么定”“被否的方案是什么”“给我一段可授权的 brief”。
+whenToUse: 当 human 需要在独立会话里查询私有账本、生成可授权的最小 brief 时使用；开发 agent 不得调用。
+disable-model-invocation: true
+license: MIT
+metadata:
+  version: "0.1.0"
+  author: iswalterwu
+  homepage: https://github.com/iswalterwu/dev-circuit-ultra
 ---
 
 # dev-circuit-ledger

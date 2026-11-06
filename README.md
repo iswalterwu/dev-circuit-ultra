@@ -2,13 +2,15 @@
 
 # Dev-circuit-ultra
 
-Design is the source. History stays outside. A five-step feature loop for independent developers: one slice at a time, only the current design in the project.
+Less context. Less ceremony. More shipping.
 
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="license"></a> <img src="https://img.shields.io/badge/python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/pwsh-7-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="pwsh 7"> <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20pi-6b4fbb?style=flat-square" alt="Claude Code / Codex / pi">
+A development loop with the ceremony removed.
+
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="license"></a> <img src="https://img.shields.io/badge/python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="python"> <img src="https://img.shields.io/badge/pwsh-7-5391FE?style=flat-square&logo=powershell&logoColor=white" alt="pwsh 7"> <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20pi%20%C2%B7%20DeepSeek%20Harness-6b4fbb?style=flat-square" alt="Claude Code / Codex / pi / DeepSeek Harness">
 
 [After setup](#after-setup) · [Five steps](#five-steps) · [Quick start](#quick-start) · [Demo](#demo) · [Isolation](#isolation) · [How it differs from OpenSpec](#how-it-differs-from-openspec) · [Chinese](README.zh-CN.md)
 
-Dev-circuit-ultra is a feature development loop for independent developers, delivered as a skill for coding agents such as Claude Code, Codex and pi. It breaks a feature into five steps: design clarification, one slice, build and verify, independent review, and closeout.
+Dev-circuit-ultra is a feature development loop for independent developers, delivered as a skill for coding agents such as Claude Code, Codex, pi and DeepSeek Harness. It breaks a feature into five steps: design clarification, one slice, build and verify, independent review, and closeout.
 
 It does **not** maintain proposals, task lists or an archive, and it does not keep a long-lived design archive. **The current design is the only source.** When the design changes, the old text is overwritten or deleted; decision history lives in a private ledger **outside the project**, and the development agent never reads it.
 
@@ -26,6 +28,10 @@ It does **not** maintain proposals, task lists or an archive, and it does not ke
 
 ## Five steps
 
+<p align="center"><img src="assets/five-steps-en.svg" alt="Five steps: design clarification, one slice, build and verify, review once, closeout" width="100%"></p>
+
+<p align="center"><em>Figure 2. The five-step loop: current design in, history out.</em></p>
+
 1. **Design clarification + intent card**: read the current product design; ask design questions; choose an approach; write the current design and spec delta.
 2. **One slice**: plan only the next end-to-end slice; derive implementation/test scope from the design.
 3. **Build + verify**: implement and test; change the design before changing code; run project checks.
@@ -35,7 +41,7 @@ It does **not** maintain proposals, task lists or an archive, and it does not ke
 ## Quick start
 
 ```powershell
-# 1. Sync the skill (Claude Code / agents directories)
+# 1. Sync the skill (Claude Code / agents / DeepSeek Harness directories)
 pwsh -NoProfile -File sync.ps1
 
 # 2. Create a project
@@ -47,11 +53,25 @@ pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
   -Path D:\ledgers\my-app
 ```
 
-Then start with design clarification inside the project. The ledger is a separate step; no `ledger/` appears in the project.
+Then start with design clarification inside the project. On the first feature, the skill asks once how to run the independent review (same model, a named reviewer agent, or ask again each feature) and saves the choice in `.dev-circuit/reviewer.json`. The ledger is a separate step; no `ledger/` appears in the project.
 
 Implementation: Markdown skill + Python 3 (`doc_guard` / `spec_check`) + PowerShell 7 (bootstrap) + git; no server component, Docker isolation optional.
 
+## DeepSeek Harness
+
+The same repository is a DSH plugin package and a set of DSH-compatible skills. Install the package to register all three skills at once:
+
+```powershell
+dsh plugin --profile web add dev-circuit-ultra
+```
+
+Or publish the individual `skills/<name>/` folders to the Skill Store through SkillHub / ClawHub. `dev-circuit-archivist` and `dev-circuit-ledger` are human-invoked only; the development model cannot auto-load them. See [docs/dsh.md](docs/dsh.md) for installation, store publishing and listing copy.
+
 ## Demo
+
+<p align="center"><a href="assets/demo-60s-en.webm"><img src="assets/demo-60s-poster-en.png" alt="Watch the 60-second walkthrough" width="100%"></a></p>
+
+<p align="center"><em>60-second walkthrough: the five steps plus the open-ended OpenSpec A/B (WebM, no audio).</em></p>
 
 ```powershell
 python demo/run_demo.py
@@ -90,6 +110,10 @@ Full boundary and verification commands: [docs/ledger.md](docs/ledger.md) and [d
 
 OpenSpec is a better fit when you need an audit trail, cross-person handoff or cross-repo planning. Dev-circuit-ultra is lighter for one developer shipping continuously with an agent.
 
+<p align="center"><img src="assets/ab-comparison-en.svg" alt="Open A/B: Dev-circuit-ultra vs OpenSpec" width="100%"></p>
+
+<p align="center"><em>Figure 3. Open A/B (n=1, blind artifact review): Dev 27/30, OpenSpec 26/30. Dev was 3% faster, 30% cheaper, and finished clean; OpenSpec had more tests and stronger error handling but left 11 uncommitted entries and a float total. Not a general claim. See <a href="bench/README.md">bench/README.md</a>.</em></p>
+
 ## FAQ
 
 **What if the design changes?**
@@ -108,6 +132,10 @@ Not under strong isolation: no mount, no path, no credentials. Weak/medium setup
 
 The design is the implementation basis, not a history. Without it the agent guesses; the ledger explains past guesses to the human, not to the agent.
 
+**Who chooses the reviewer?**
+
+You do. On the first feature the skill asks whether to use the same model in an independent context, a named read-only reviewer agent, or ask again at the start of every feature; it stores the answer in `.dev-circuit/reviewer.json`. There is no fixed reviewer model in the skill. If the configured agent is missing or fails, it stops and asks instead of silently substituting an implementation worker.
+
 **How many tests?**
 
 Enough to cover the design's boundaries/contracts. Tests are evidence, not a decision archive; disposable tests are fine, only user-visible contract/regression tests need to stay. No test matrix.
@@ -116,9 +144,10 @@ Enough to cover the design's boundaries/contracts. Tests are evidence, not a dec
 
 - [SKILL.md](skills/dev-circuit-ultra/SKILL.md): full workflow, rules and templates
 - [docs/ledger.md](docs/ledger.md): boundaries, isolation and verification commands
+- [docs/dsh.md](docs/dsh.md): DeepSeek Harness install, compatibility and Store publishing
 - [docker/README.md](docker/README.md): dev / archivist / ledger container reference
 - [demo/README.md](demo/README.md): deterministic end-to-end demo
-- [bench/README.md](bench/README.md): pre-rename spec-loop baseline; not a benchmark of the new workflow
+- [bench/README.md](bench/README.md): open A/B, blind rubric and historical baselines
 
 ## License
 

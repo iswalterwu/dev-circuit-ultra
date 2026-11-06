@@ -1,6 +1,13 @@
 ---
 name: dev-circuit-archivist
 description: dev-circuit-ultra 的独立记账 agent。只由 human 或外部 orchestrator 在单独会话/容器里运行；项目只读、账本追加写；不改代码/设计，不把账本内容返回给开发 agent。用于设计决策、切片、审核和收尾的历史记录。
+whenToUse: 当 human 或外部 orchestrator 需要在独立会话/容器里记录设计决策、切片、审核、收尾历史时使用；开发 agent 不得调用。
+disable-model-invocation: true
+license: MIT
+metadata:
+  version: "0.1.0"
+  author: iswalterwu
+  homepage: https://github.com/iswalterwu/dev-circuit-ultra
 ---
 
 # dev-circuit-archivist

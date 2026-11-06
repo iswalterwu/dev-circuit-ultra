@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1424 820" role="img" aria-label="One feature. Two loops.">
+  <rect width="1424" height="820" fill="#fffdf8"/>
+  <rect x="24" y="24" width="1376" height="772" fill="none" stroke="#102a43" stroke-width="2"/>
+  <text x="64" y="68" font-size="12" font-weight="700" letter-spacing="1.4" fill="#1f4fd8">CONTROLLED A/B  /  2026-11-06</text>
+  <text x="64" y="122" font-size="38" font-weight="700" fill="#102a43">One feature. Two loops.</text>
+  <text x="64" y="150" font-size="17" fill="#486581">Same fixture, same model, same 20 hidden acceptance checks.</text>
+  <rect x="64" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="198" font-size="22" font-weight="700" fill="#102a43">Model cost</text>
+<text x="96" y="222" font-size="14" fill="#627d98">Lower is better</text>
+<text x="96" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="268" width="256" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.0896</text>
+<text x="96" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="314" width="276" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.0965</text>
+<text x="96" y="402" font-size="14" font-weight="700" fill="#2e7d32">7% lower</text>
+<text x="96" y="422" font-size="13" fill="#627d98"></text>
+  <rect x="736" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="198" font-size="22" font-weight="700" fill="#102a43">Wall time</text>
+<text x="768" y="222" font-size="14" fill="#627d98">Includes model latency</text>
+<text x="768" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="268" width="274" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">438.7s</text>
+<text x="768" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="314" width="254" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">405.6s</text>
+<text x="768" y="402" font-size="14" font-weight="700" fill="#b42318">8% higher</text>
+<text x="768" y="422" font-size="13" fill="#627d98"></text>
+  <rect x="64" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="506" font-size="22" font-weight="700" fill="#102a43">Retained docs</text>
+<text x="96" y="530" font-size="14" fill="#627d98">Lines left in the repo</text>
+<text x="96" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="576" width="22" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">66</text>
+<text x="96" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="622" width="295" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">884</text>
+<text x="96" y="710" font-size="14" font-weight="700" fill="#2e7d32">1/13 the size</text>
+<text x="96" y="730" font-size="13" fill="#627d98"></text>
+  <rect x="736" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="506" font-size="22" font-weight="700" fill="#102a43">Own tests</text>
+<text x="768" y="530" font-size="14" fill="#627d98">Hidden acceptance: 20/20 both</text>
+<text x="768" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="576" width="98" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">26</text>
+<text x="768" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="622" width="274" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">73</text>
+<text x="768" y="710" font-size="14" font-weight="700" fill="#2e7d32">same acceptance</text>
+<text x="768" y="730" font-size="13" fill="#627d98">fewer tests is not a quality score</text>
+  <line x1="64" y1="758" x2="1360" y2="758" stroke="#d9e2ec"/>
+  <text x="64" y="784" font-size="13" fill="#627d98">n=1. Not a statistical benchmark and not a quality claim. Source: bench/results_dev_circuit.json</text>
+</svg>

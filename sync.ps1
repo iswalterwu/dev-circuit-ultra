@@ -14,9 +14,11 @@ if ($LASTEXITCODE -ne 0 -or -not $version) {
 }
 
 $skills = @(Get-ChildItem -LiteralPath $sourceRoot -Directory | Sort-Object Name)
+$dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
 $targets = @(
   (Join-Path $env:USERPROFILE '.claude\skills')
   (Join-Path $env:USERPROFILE '.agents\skills')
+  (Join-Path $dshHome 'skills')
 )
 
 foreach ($target in $targets) {

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1424 820" role="img" aria-label="One open brief. Two loops.">
+  <rect width="1424" height="820" fill="#fffdf8"/>
+  <rect x="24" y="24" width="1376" height="772" fill="none" stroke="#102a43" stroke-width="2"/>
+  <text x="64" y="68" font-size="12" font-weight="700" letter-spacing="1.4" fill="#1f4fd8">OPEN A/B  /  BLIND ARTIFACT REVIEW  /  2026-11-06</text>
+  <text x="64" y="122" font-size="38" font-weight="700" fill="#102a43">One open brief. Two loops.</text>
+  <text x="64" y="150" font-size="17" fill="#486581">Same fixture, same open prompt, same model. A blind reviewer scored the final repos.</text>
+  <rect x="64" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="198" font-size="22" font-weight="700" fill="#102a43">Blind rubric</text>
+<text x="96" y="222" font-size="14" fill="#627d98">1–5 per dimension, 30 total</text>
+<text x="96" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="268" width="270" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">27/30</text>
+<text x="96" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="314" width="260" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">26/30</text>
+<text x="96" y="402" font-size="14" font-weight="700" fill="#2e7d32">+1 point</text>
+  <rect x="736" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="198" font-size="22" font-weight="700" fill="#102a43">Model cost</text>
+<text x="768" y="222" font-size="14" fill="#627d98">Lower is better</text>
+<text x="768" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="268" width="186" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.0743</text>
+<text x="768" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="314" width="265" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.1060</text>
+<text x="768" y="402" font-size="14" font-weight="700" fill="#2e7d32">30% lower</text>
+  <rect x="64" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="506" font-size="22" font-weight="700" fill="#102a43">Wall time</text>
+<text x="96" y="530" font-size="14" fill="#627d98">Includes model latency</text>
+<text x="96" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="576" width="245" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">409s</text>
+<text x="96" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="622" width="253" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">421s</text>
+<text x="96" y="710" font-size="14" font-weight="700" fill="#2e7d32">3% faster</text>
+  <rect x="736" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="506" font-size="22" font-weight="700" fill="#102a43">Closeout</text>
+<text x="768" y="530" font-size="14" fill="#627d98">Uncommitted deliverables; lower is better</text>
+<text x="768" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="576" width="2" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">0</text>
+<text x="768" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="622" width="275" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">11</text>
+<text x="768" y="710" font-size="14" font-weight="700" fill="#2e7d32">clean vs 11 uncommitted</text>
+  <line x1="64" y1="758" x2="1360" y2="758" stroke="#d9e2ec"/>
+  <text x="64" y="784" font-size="13" fill="#627d98">n=1 · no hidden acceptance · one end-to-end session per skill · scores are artifact judgments, not a statistical benchmark. Source: bench/results_open_ab.json</text>
+</svg>

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1424 820" role="img" aria-label="同一个功能，两种 loop。">
+  <rect width="1424" height="820" fill="#fffdf8"/>
+  <rect x="24" y="24" width="1376" height="772" fill="none" stroke="#102a43" stroke-width="2"/>
+  <text x="64" y="68" font-size="12" font-weight="700" letter-spacing="1.4" fill="#1f4fd8">受控 A/B  /  2026-11-06</text>
+  <text x="64" y="122" font-size="38" font-weight="700" fill="#102a43">同一个功能，两种 loop。</text>
+  <text x="64" y="150" font-size="17" fill="#486581">同一 fixture、同一模型、同样的 20 条隐藏验收。</text>
+  <rect x="64" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="198" font-size="22" font-weight="700" fill="#102a43">模型成本</text>
+<text x="96" y="222" font-size="14" fill="#627d98">越低越好</text>
+<text x="96" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="268" width="256" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.0896</text>
+<text x="96" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="314" width="276" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">$0.0965</text>
+<text x="96" y="402" font-size="14" font-weight="700" fill="#2e7d32">低 7%</text>
+<text x="96" y="422" font-size="13" fill="#627d98"></text>
+  <rect x="736" y="156" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="198" font-size="22" font-weight="700" fill="#102a43">实际耗时</text>
+<text x="768" y="222" font-size="14" fill="#627d98">包含模型延迟</text>
+<text x="768" y="283" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="268" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="268" width="274" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="283" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">438.7s</text>
+<text x="768" y="329" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="314" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="314" width="254" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="329" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">405.6s</text>
+<text x="768" y="402" font-size="14" font-weight="700" fill="#b42318">高 8%</text>
+<text x="768" y="422" font-size="13" fill="#627d98"></text>
+  <rect x="64" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="96" y="506" font-size="22" font-weight="700" fill="#102a43">保留下来的文档</text>
+<text x="96" y="530" font-size="14" fill="#627d98">仓库里剩下的行数</text>
+<text x="96" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="240" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="576" width="22" height="20" rx="3" fill="#1f4fd8"/>
+<text x="558" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">66</text>
+<text x="96" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="240" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="240" y="622" width="295" height="20" rx="3" fill="#b45309"/>
+<text x="558" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">884</text>
+<text x="96" y="710" font-size="14" font-weight="700" fill="#2e7d32">约为 1/13</text>
+<text x="96" y="730" font-size="13" fill="#627d98"></text>
+  <rect x="736" y="464" width="624" height="280" rx="6" fill="#f8fafc" stroke="#d9e2ec"/>
+<text x="768" y="506" font-size="22" font-weight="700" fill="#102a43">自有测试</text>
+<text x="768" y="530" font-size="14" fill="#627d98">隐藏验收：双方都是 20/20</text>
+<text x="768" y="591" font-size="15" fill="#102a43">Dev-circuit-ultra</text>
+<rect x="912" y="576" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="576" width="98" height="20" rx="3" fill="#1f4fd8"/>
+<text x="1230" y="591" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">26</text>
+<text x="768" y="637" font-size="15" fill="#102a43">OpenSpec 1.15</text>
+<rect x="912" y="622" width="300" height="20" rx="3" fill="#e5edf5"/>
+<rect x="912" y="622" width="274" height="20" rx="3" fill="#b45309"/>
+<text x="1230" y="637" font-size="15" font-family="Consolas, monospace" font-weight="700" fill="#102a43">73</text>
+<text x="768" y="710" font-size="14" font-weight="700" fill="#2e7d32">验收相同</text>
+<text x="768" y="730" font-size="13" fill="#627d98">测试更少不等于质量更好</text>
+  <line x1="64" y1="758" x2="1360" y2="758" stroke="#d9e2ec"/>
+  <text x="64" y="784" font-size="13" fill="#627d98">n=1，不是统计基准，也不是质量结论。来源：bench/results_dev_circuit.json</text>
+</svg>

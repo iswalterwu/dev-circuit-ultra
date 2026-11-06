@@ -36,7 +36,7 @@ SPEC_LOOP_RESULTS = OUT / "results.json"
 
 
 def main() -> int:
-    root = Path("C:/Users/iswal/spec-loop-ab")
+    root = Path("C:/Users/iswal/dev-circuit-ab")
     repo = root / "openspec"
     skills = repo / ".pi" / "skills"
     reviewer = Path("C:/Users/iswal/spec-loop-draft/skills/dev-circuit-ultra/reviewer.md")
@@ -130,7 +130,7 @@ def main() -> int:
         "tests": tests,
         "hidden": hidden,
     }
-    (OUT / "openspec_capped.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT / "openspec_capped_dev.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 
     total = {
         "input": sum(s["input"] for s in steps),
@@ -140,7 +140,7 @@ def main() -> int:
         "seconds": round(sum(s["seconds"] for s in steps), 1),
     }
     results["totals"] = total
-    (OUT / "openspec_capped.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUT / "openspec_capped_dev.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(json.dumps(total, ensure_ascii=False, indent=2))
     print("hidden:", hidden["summary"])

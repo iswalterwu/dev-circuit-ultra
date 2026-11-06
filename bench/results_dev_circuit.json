@@ -1,0 +1,157 @@
+{
+  "run": "2026-11-06",
+  "model": "deepseek/deepseek-flash",
+  "thinking": "high",
+  "feature": "给 records CLI 加 `report` 命令。共 20 条验收：\n\n1. 默认表格：第一行 `id<TAB>name<TAB>amount`，之后按 `records.json` 顺序，每行一条，制表符分隔。\n2. `--format csv`：表头同上，字段按 RFC 4180 转义，UTF-8。\n3. `--format json`：输出对象数组，键是所选的列。\n4. `--sort id|name|amount`，默认 `id`；`name` 不区分大小写，`amount` 按数值。\n5. `--desc` 反转排序。\n6. `--filter TEXT`：按 `name` 做不区分大小写的子串过滤。\n7. `--min-amount N`：保留 `amount >= N`。\n8. `--max-amount N`：保留 `amount <= N`。\n9. `--limit N`：过滤和排序后取前 N 条。\n10. `--offset N`：过滤和排序后跳过前 N 条。\n11. `--columns a,b`：只输出列出的列，顺序按传入；只允许 `id`、`name`、`amount`。\n12. `--total`：表格和 CSV 末尾加一行 `TOTAL`、空 name、amount 合计；JSON 忽略。\n13. `-o FILE`：写入文件，stdout 不输出内容。\n14. 空结果：表格和 CSV 只有表头；JSON 为 `[]`。\n15. 非法 `--sort`、非法 `--columns`、负数 `--limit`/`--offset`、非整数金额：退出码 2，stderr 有错误，stdout 为空。\n16. 原有 `python records.py export --id N` 保持单条 JSON 对象，不能坏。\n17. 所有输出使用 UTF-8。\n18. 不引入第三方依赖。\n19. 过滤、金额范围、排序、offset、limit 的处理顺序为：过滤 → 金额范围 → 排序 → offset → limit。\n20. `--total` 的合计只统计过滤后的记录。",
+  "caveat": "n=1; same fixture/feature/model; controlled review; not a statistical benchmark.",
+  "dev_circuit_ultra": {
+    "totals": {
+      "input": 59255,
+      "output": 54421,
+      "cache_read": 1091840,
+      "cost": 0.089633,
+      "seconds": 438.7
+    },
+    "steps": [
+      {
+        "step": "dev_circuit_implement",
+        "seconds": 226.9,
+        "input": 19016,
+        "output": 25934,
+        "cache_read": 551680,
+        "cost": 0.040136,
+        "turns": 19
+      },
+      {
+        "step": "dev_circuit_review",
+        "seconds": 95.5,
+        "input": 19416,
+        "output": 14047,
+        "cache_read": 91264,
+        "cost": 0.023229,
+        "turns": 7
+      },
+      {
+        "step": "dev_circuit_close",
+        "seconds": 116.3,
+        "input": 20823,
+        "output": 14440,
+        "cache_read": 448896,
+        "cost": 0.026268,
+        "turns": 18
+      }
+    ],
+    "tests": "26 passed in 5.75s",
+    "hidden": "20 passed in 2.87s",
+    "docs": {
+      "requirements_files": [
+        "docs/requirements/report.md"
+      ],
+      "requirements_lines": 66,
+      "requirements_ids": 20,
+      "cards_left": []
+    },
+    "commits": [
+      "1a67c21 close add-report",
+      "59397c3 docs(add-report): merge REPORT-1..REPORT-20 into report",
+      "bf3ee68 fix(add-report): default --sort to id"
+    ],
+    "diff_stat": [
+      "docs/requirements/README.md |   2 +-",
+      " docs/requirements/report.md |  66 ++++++++++",
+      " records.py                  | 148 ++++++++++++++++++++-",
+      " tests/test_report.py        | 304 ++++++++++++++++++++++++++++++++++++++++++++",
+      " 4 files changed, 512 insertions(+), 8 deletions(-)"
+    ]
+  },
+  "openspec_capped": {
+    "totals": {
+      "input": 101856,
+      "output": 49357,
+      "cache_read": 1115008,
+      "cost": 0.096476,
+      "seconds": 405.6
+    },
+    "steps": [
+      {
+        "step": "openspec_propose",
+        "seconds": 98.7,
+        "input": 15958,
+        "output": 11413,
+        "cache_read": 243968,
+        "cost": 0.019947,
+        "turns": 17
+      },
+      {
+        "step": "openspec_apply",
+        "seconds": 117.9,
+        "input": 24708,
+        "output": 15529,
+        "cache_read": 500096,
+        "cost": 0.029048,
+        "turns": 19
+      },
+      {
+        "step": "openspec_review",
+        "seconds": 80.1,
+        "input": 23198,
+        "output": 10422,
+        "cache_read": 138368,
+        "cost": 0.020296,
+        "turns": 9
+      },
+      {
+        "step": "openspec_fix",
+        "seconds": 68.1,
+        "input": 18132,
+        "output": 9034,
+        "cache_read": 96256,
+        "cost": 0.016858,
+        "turns": 8
+      },
+      {
+        "step": "openspec_archive",
+        "seconds": 40.8,
+        "input": 19860,
+        "output": 2959,
+        "cache_read": 136320,
+        "cost": 0.010327,
+        "turns": 10
+      }
+    ],
+    "tests": "73 passed in 6.38s",
+    "hidden": "20 passed in 2.81s",
+    "docs": {
+      "archive_files": [
+        "openspec/changes/archive/2026-11-06-add-report/design.md",
+        "openspec/changes/archive/2026-11-06-add-report/proposal.md",
+        "openspec/changes/archive/2026-11-06-add-report/tasks.md",
+        "openspec/changes/archive/2026-11-06-add-report/specs/records-export/spec.md",
+        "openspec/changes/archive/2026-11-06-add-report/specs/records-report/spec.md"
+      ],
+      "archive_lines": 531,
+      "spec_files": [
+        "openspec/specs/records-export/spec.md",
+        "openspec/specs/records-report/spec.md"
+      ],
+      "spec_lines": 353
+    },
+    "commits": [
+      "8861378 chore(openspec): sync add-report specs and archive change"
+    ],
+    "diff_stat": [
+      "AGENTS.md                                          |  15 +-",
+      " .../archive/2026-11-06-add-report/.openspec.yaml   |   2 +",
+      " .../archive/2026-11-06-add-report/design.md        | 107 ++++++++",
+      " .../archive/2026-11-06-add-report/proposal.md      |  35 +++",
+      " .../specs/records-export/spec.md                   |  54 ++++",
+      " .../specs/records-report/spec.md                   | 299 +++++++++++++++++++++",
+      " .../changes/archive/2026-11-06-add-report/tasks.md |  36 +++",
+      " openspec/specs/records-export/spec.md              |  54 ++++",
+      " openspec/specs/records-report/spec.md              | 299 +++++++++++++++++++++",
+      " records.py                                         | 184 ++++++++++++-",
+      " tests/test_records.py                              |   8 +",
+      " 11 files changed, 1085 insertions(+), 8 deletions(-)"
+    ]
+  }
+}

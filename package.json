@@ -1,0 +1,67 @@
+{
+  "name": "dev-circuit-ultra",
+  "version": "0.1.0",
+  "description": "Less context. Less ceremony. More shipping. A development loop with the ceremony removed.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "skills",
+    "assets",
+    "!assets/demo-60s-*.mp4",
+    "!assets/demo-60s-*.webm",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "demo",
+    "docker",
+    "docs/dsh.md",
+    "docs/ledger.md",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "sync.ps1"
+  ],
+  "keywords": [
+    "pi-package",
+    "agent-skills",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "claude-code",
+    "codex",
+    "spec-driven-development",
+    "design",
+    "code-review"
+  ],
+  "author": "iswalterwu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iswalterwu/dev-circuit-ultra.git"
+  },
+  "homepage": "https://github.com/iswalterwu/dev-circuit-ultra",
+  "bugs": {
+    "url": "https://github.com/iswalterwu/dev-circuit-ultra/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "python -m pytest -q",
+    "demo": "python demo/run_demo.py"
+  }
+}

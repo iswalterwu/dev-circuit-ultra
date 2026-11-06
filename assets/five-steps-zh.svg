@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1424" height="520" viewBox="0 0 1424 520" role="img" aria-labelledby="title desc">
+  <title id="title">Dev-circuit-ultra：五步，一次只做一个切片</title>
+  <desc id="desc">五步：设计澄清、单个切片、实现与验证、独立审核、收尾合并。</desc>
+  <rect width="1424" height="520" fill="#fffdf8"/>
+  <text x="64" y="72" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="2" fill="#1f4fd8">五步循环</text>
+  <text x="64" y="112" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="32" font-weight="700" fill="#102a43">五步，一次只做一个切片。</text>
+  <text x="64" y="144" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#486581">更少上下文，更少流程，更多交付。</text>
+
+  <g font-family="'Microsoft YaHei', Arial, sans-serif">
+    <g>
+      <rect x="64" y="184" width="240" height="248" rx="4" fill="#fff8e7" stroke="#102a43" stroke-width="2"/>
+      <rect x="65" y="185" width="238" height="6" fill="#1f4fd8"/>
+      <circle cx="96" cy="216" r="16" fill="#1f4fd8"/>
+      <text x="96" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#fffdf8">01</text>
+      <text x="88" y="264" font-size="20" font-weight="700" fill="#102a43">设计澄清</text>
+      <line x1="88" y1="280" x2="280" y2="280" stroke="#d9e2ec" stroke-width="1"/>
+      <text x="88" y="312" font-size="14" fill="#486581">先问清设计问题，</text>
+      <text x="88" y="334" font-size="14" fill="#486581">写现行设计与</text>
+      <text x="88" y="356" font-size="14" fill="#486581">规格变化。</text>
+    </g>
+    <g>
+      <rect x="328" y="184" width="240" height="248" rx="4" fill="#fff8e7" stroke="#102a43" stroke-width="2"/>
+      <rect x="329" y="185" width="238" height="6" fill="#ffb703"/>
+      <circle cx="360" cy="216" r="16" fill="#ffb703"/>
+      <text x="360" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#102a43">02</text>
+      <text x="352" y="264" font-size="20" font-weight="700" fill="#102a43">单个切片</text>
+      <line x1="352" y1="280" x2="544" y2="280" stroke="#d9e2ec" stroke-width="1"/>
+      <text x="352" y="312" font-size="14" fill="#486581">只规划下一个</text>
+      <text x="352" y="334" font-size="14" fill="#486581">能独立验收的</text>
+      <text x="352" y="356" font-size="14" fill="#486581">端到端切片。</text>
+    </g>
+    <g>
+      <rect x="592" y="184" width="240" height="248" rx="4" fill="#fff8e7" stroke="#102a43" stroke-width="2"/>
+      <rect x="593" y="185" width="238" height="6" fill="#1f4fd8"/>
+      <circle cx="624" cy="216" r="16" fill="#1f4fd8"/>
+      <text x="624" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#fffdf8">03</text>
+      <text x="616" y="264" font-size="20" font-weight="700" fill="#102a43">实现 + 验证</text>
+      <line x1="616" y1="280" x2="808" y2="280" stroke="#d9e2ec" stroke-width="1"/>
+      <text x="616" y="312" font-size="14" fill="#486581">写代码、补测试，</text>
+      <text x="616" y="334" font-size="14" fill="#486581">跑项目检查。</text>
+    </g>
+    <g>
+      <rect x="856" y="184" width="240" height="248" rx="4" fill="#fff8e7" stroke="#102a43" stroke-width="2"/>
+      <rect x="857" y="185" width="238" height="6" fill="#ffb703"/>
+      <circle cx="888" cy="216" r="16" fill="#ffb703"/>
+      <text x="888" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#102a43">04</text>
+      <text x="880" y="264" font-size="20" font-weight="700" fill="#102a43">独立审核</text>
+      <line x1="880" y1="280" x2="1072" y2="280" stroke="#d9e2ec" stroke-width="1"/>
+      <text x="880" y="312" font-size="14" fill="#486581">独立 reviewer 对</text>
+      <text x="880" y="334" font-size="14" fill="#486581">现行设计和 diff</text>
+      <text x="880" y="356" font-size="14" fill="#486581">审一次。</text>
+    </g>
+    <g>
+      <rect x="1120" y="184" width="240" height="248" rx="4" fill="#fff8e7" stroke="#102a43" stroke-width="2"/>
+      <rect x="1121" y="185" width="238" height="6" fill="#1f4fd8"/>
+      <circle cx="1152" cy="216" r="16" fill="#1f4fd8"/>
+      <text x="1152" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#fffdf8">05</text>
+      <text x="1144" y="264" font-size="20" font-weight="700" fill="#102a43">收尾合并</text>
+      <line x1="1144" y1="280" x2="1336" y2="280" stroke="#d9e2ec" stroke-width="1"/>
+      <text x="1144" y="312" font-size="14" fill="#486581">合并规格，</text>
+      <text x="1144" y="334" font-size="14" fill="#486581">删除卡片；</text>
+      <text x="1144" y="356" font-size="14" fill="#486581">历史留在项目外。</text>
+    </g>
+  </g>
+
+  <g stroke="#102a43" stroke-width="1.5" fill="none" aria-hidden="true">
+    <path d="M304 308 H320 M316 303 L321 308 L316 313"/>
+    <path d="M568 308 H584 M580 303 L585 308 L580 313"/>
+    <path d="M832 308 H848 M844 303 L849 308 L844 313"/>
+    <path d="M1096 308 H1112 M1108 303 L1113 308 L1108 313"/>
+  </g>
+
+  <text x="64" y="480" font-family="'Microsoft YaHei', Arial, sans-serif" font-size="14" fill="#486581">项目里只留现行设计，历史在项目外。</text>
+  <text x="1360" y="480" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="#627d98">DEV-CIRCUIT-ULTRA</text>
+</svg>

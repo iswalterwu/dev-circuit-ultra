@@ -214,7 +214,7 @@ def line_count(path: Path) -> int:
 
 
 def repo_docs(repo: Path, kind: str) -> dict:
-    if kind == "spec-loop":
+    if kind in {"spec-loop", "dev-circuit"}:
         reqs = [p for p in (repo / "docs" / "requirements").glob("*.md") if p.name != "README.md"]
         cards = list((repo / "specs").glob("*/spec.md"))
         return {

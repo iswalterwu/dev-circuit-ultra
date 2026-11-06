@@ -1,0 +1,93 @@
+{
+  "run": "2026-11-06",
+  "problem": "bench/open/problem.md",
+  "method": "One open prompt per skill; no slice count, review budget, hidden acceptance or prescribed command shape; one end-to-end session each. Dev reviewer was user-configured to reviewer-fast; benchmark preset for a non-interactive run.",
+  "model": "deepseek/deepseek-flash",
+  "thinking": "high",
+  "mapping": {
+    "A": "dev-circuit-ultra",
+    "B": "OpenSpec 1.15"
+  },
+  "reviewer_config": {
+    "dev": {
+      "mode": "agent",
+      "agent": "reviewer-fast"
+    },
+    "openspec": "OpenSpec default"
+  },
+  "judge": {
+    "mode": "blind A/B artifact review",
+    "rubric": "bench/open/rubric.md",
+    "result": "bench/open/judge-result.md",
+    "dev": {
+      "total": 27,
+      "product": 5,
+      "correctness": 4,
+      "tests": 4,
+      "docs": 4,
+      "code": 5,
+      "closeout": 5
+    },
+    "openspec": {
+      "total": 26,
+      "product": 5,
+      "correctness": 4,
+      "tests": 5,
+      "docs": 5,
+      "code": 4,
+      "closeout": 3
+    }
+  },
+  "dev": {
+    "seconds": 408.9,
+    "cost": 0.074322,
+    "turns": 39,
+    "tests": "13 passed in 3.27s",
+    "export_ok": true,
+    "requirements_lines": 55,
+    "requirements_files": [
+      "docs/requirements/report.md"
+    ],
+    "guide_lines": 77,
+    "openspec_spec_lines": 0,
+    "openspec_archive_lines": 0,
+    "cards_left": [],
+    "commits": 1,
+    "uncommitted": 0,
+    "untracked": [
+      ".bench/"
+    ],
+    "uncommitted_deliverables": 0,
+    "harness_untracked": [
+      ".bench/"
+    ],
+    "total_docs_lines": 132
+  },
+  "openspec": {
+    "seconds": 421.0,
+    "cost": 0.105972,
+    "turns": 50,
+    "tests": "21 passed in 3.81s",
+    "export_ok": true,
+    "requirements_lines": 50,
+    "requirements_files": [
+      "docs/requirements/expense-report.md"
+    ],
+    "guide_lines": 114,
+    "openspec_spec_lines": 109,
+    "openspec_archive_lines": 0,
+    "cards_left": [],
+    "commits": 0,
+    "uncommitted": 11,
+    "untracked": [
+      ".gitignore",
+      "docs/report.md",
+      "docs/requirements/expense-report.md",
+      "openspec/changes/",
+      "openspec/specs/expense-report/"
+    ],
+    "uncommitted_deliverables": 11,
+    "total_docs_lines": 273
+  },
+  "caveat": "n=1; judge scores are artifact judgments, not a statistical benchmark. Dev finished with 1 commit (only harness .bench/ outside the copy); OpenSpec left 11 uncommitted entries. The judge saw git status through EVIDENCE, not .git."
+}
