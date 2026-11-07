@@ -1,2 +1,8 @@
 # 本机路径，不要提交：账本位置只对这台机器有意义
 .dev-circuit/guard.json
+
+# 本地缓存与依赖目录；项目用不到的语言可以删掉
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/

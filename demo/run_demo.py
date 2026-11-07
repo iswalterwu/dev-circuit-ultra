@@ -49,6 +49,7 @@ CARD_V1 = """# add-greet：向用户打招呼
 - `greet(name)` 去掉首尾空格；空名字抛 `ValueError`。
 - CLI：`python -m greet --name NAME`，输出 `HELLO, NAME!`。
 - 只保留这一种输出；不讨论其他风格。
+- 失败行为：`--name` 缺失或去掉空格后为空时，CLI 用 argparse 报错，退出码 2，不输出问候。
 
 ## 规格变化
 - 新增 GREET-1：`greet` 输出问候。例：`greet("Ada")` → `HELLO, Ada!`。
@@ -85,6 +86,7 @@ CARD_V2 = """# add-greet：向用户打招呼
 - `greet(name)` 去掉首尾空格；空名字抛 `ValueError`。
 - CLI：`python -m greet --name NAME`，输出 `Hello, NAME!`。
 - 保留输入的大小写，不做自动大写。
+- 失败行为：`--name` 缺失或去掉空格后为空时，CLI 用 argparse 报错，退出码 2，不输出问候。
 
 ## 规格变化
 - 新增 GREET-1：`greet` 输出问候。例：`greet("Ada")` → `Hello, Ada!`。
