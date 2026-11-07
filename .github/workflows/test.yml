@@ -8,13 +8,73 @@ on:
 
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        python-version: [ "3.10", "3.13" ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python-version }}
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
       - name: Run tests
         run: python -m pytest tests -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build the wheel and the sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install the wheel like a user would
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet dist/*.whl
+          "$RUNNER_TEMP/venv/bin/devcircuit" --version
+          "$RUNNER_TEMP/venv/bin/devcircuit" rules
+      - name: Scaffold a project, a ledger and the skill dirs from the wheel
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          CLI="$RUNNER_TEMP/venv/bin/devcircuit"
+          "$CLI" init --path "$RUNNER_TEMP/app-init" --name "CI App"
+          test -f "$RUNNER_TEMP/app-init/AGENTS.md"
+          test -f "$RUNNER_TEMP/app-init/scripts/spec_check.py"
+          test -f "$RUNNER_TEMP/app-init/.githooks/pre-commit"
+          git -C "$RUNNER_TEMP/app-init" log --oneline | head -1
+          "$CLI" ledger --path "$RUNNER_TEMP/ledgers/ci"
+          git -C "$RUNNER_TEMP/ledgers/ci" log --oneline | head -1
+          "$CLI" sync --target "$RUNNER_TEMP/skills"
+          test -f "$RUNNER_TEMP/skills/dev-circuit-ultra/SKILL.md"
+          test -f "$RUNNER_TEMP/skills/dev-circuit-archivist/SKILL.md"
+          "$CLI" vendor --project "$RUNNER_TEMP/app-init"
+      - name: Install the sdist too (catches a broken source layout)
+        run: |
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pip install --quiet dist/*.tar.gz
+          "$RUNNER_TEMP/sdist-venv/bin/devcircuit" doc-guard --root . | head -3
+          "$RUNNER_TEMP/sdist-venv/bin/devcircuit" vendor --project "$RUNNER_TEMP/vendored" >/dev/null || true
+      - name: The CLI runs the same guards this repo uses
+        run: |
+          "$RUNNER_TEMP/venv/bin/devcircuit" check --root .
+      - name: Install both hooks into a scratch project
+        run: |
+          mkdir -p "$RUNNER_TEMP/app" "$RUNNER_TEMP/ledgers/app"
+          "$RUNNER_TEMP/venv/bin/devcircuit" hooks install \
+            --harness pi --project "$RUNNER_TEMP/app" --ledger "$RUNNER_TEMP/ledgers/app"
+          "$RUNNER_TEMP/venv/bin/devcircuit" hooks install \
+            --harness claude --project "$RUNNER_TEMP/app" --ledger "$RUNNER_TEMP/ledgers/app"
+          test -f "$RUNNER_TEMP/app/.pi/extensions/ledger-guard.js"
+          test -f "$RUNNER_TEMP/app/.dev-circuit/hooks/ledger_guard.py"
+          echo '{"cwd":"'"$RUNNER_TEMP"'/app","tool_name":"Read","tool_input":{"file_path":"'"$RUNNER_TEMP"'/ledgers/app/x.md"}}' \
+            | python "$RUNNER_TEMP/app/.dev-circuit/hooks/ledger_guard.py" \
+            && { echo "hook did not block"; exit 1; } || { echo "hook blocked as expected"; }
