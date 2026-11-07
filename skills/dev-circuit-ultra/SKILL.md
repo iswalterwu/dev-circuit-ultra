@@ -4,7 +4,7 @@ description: 设计驱动的功能开发循环：设计澄清 → 单个切片 �
 whenToUse: 当用户要在项目里做功能、修 bug、改文档、接手进行中的功能、做设计澄清、拆切片、做审核，或要新建/接入 dev-circuit-ultra 时使用。
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.4.0"
   author: iswalterwu
   homepage: https://github.com/iswalterwu/dev-circuit-ultra
 ---
