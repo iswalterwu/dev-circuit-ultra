@@ -1,0 +1,2 @@
+# 本机路径，不要提交：账本位置只对这台机器有意义
+.dev-circuit/guard.json

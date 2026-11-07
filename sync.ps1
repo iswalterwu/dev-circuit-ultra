@@ -1,57 +1,44 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
-param()
+<#
+.SYNOPSIS
+  把三个技能同步到 Claude Code / agents / DeepSeek Harness 的技能目录。
 
-$ErrorActionPreference = 'Stop'
-$sourceRoot = Join-Path $PSScriptRoot 'skills'
-if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
-  throw "Skill source directory not found: $sourceRoot"
-}
+.DESCRIPTION
+  真正的实现是 devcircuit CLI 的 sync 子命令；这个脚本只负责转发参数。
+  等价命令：
 
-$gitPath = $PSScriptRoot.Replace('\', '/')
-$version = & git -c "safe.directory=$gitPath" -C $PSScriptRoot rev-parse --short HEAD
-if ($LASTEXITCODE -ne 0 -or -not $version) {
-  throw "Could not read dev-circuit-ultra Git version from $PSScriptRoot"
-}
+    devcircuit sync [--target <目录>]...
 
-$skills = @(Get-ChildItem -LiteralPath $sourceRoot -Directory | Sort-Object Name)
-$dshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
-$targets = @(
-  (Join-Path $env:USERPROFILE '.claude\skills')
-  (Join-Path $env:USERPROFILE '.agents\skills')
-  (Join-Path $dshHome 'skills')
+.EXAMPLE
+  pwsh -NoProfile -File sync.ps1
+
+.EXAMPLE
+  pwsh -NoProfile -File sync.ps1 -Target ~/.pi/skills
+#>
+[CmdletBinding()]
+param(
+  [string[]]$Target
 )
 
-foreach ($target in $targets) {
-  if (-not (Test-Path -LiteralPath $target -PathType Container)) {
-    if ($PSCmdlet.ShouldProcess($target, 'Create skill directory')) {
-      New-Item -ItemType Directory -Path $target -Force | Out-Null
-    }
-  }
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 
-  # Remove pre-rename skills so an old loop cannot be invoked by accident.
-  foreach ($legacyName in @('spec-loop', 'design-loop')) {
-    $legacy = Join-Path $target $legacyName
-    if (Test-Path -LiteralPath $legacy) {
-      if ($PSCmdlet.ShouldProcess($legacy, "Remove legacy skill '$legacyName'")) {
-        Remove-Item -LiteralPath $legacy -Recurse -Force
-      }
-    }
+$command = Get-Command devcircuit -CommandType Application -ErrorAction SilentlyContinue
+$prefix = @()
+if ($command) {
+  $exe = $command.Source
+} else {
+  $tools = Join-Path $PSScriptRoot 'tools'
+  if (-not (Test-Path -LiteralPath (Join-Path $tools 'devcircuit'))) {
+    throw '找不到 devcircuit。先安装：pipx install git+https://github.com/iswalterwu/dev-circuit-ultra'
   }
-
-  foreach ($skill in $skills) {
-    $destination = Join-Path $target $skill.Name
-    $canCopy = $true
-    if (Test-Path -LiteralPath $destination) {
-      if ($PSCmdlet.ShouldProcess($destination, "Remove existing skill '$($skill.Name)'")) {
-        Remove-Item -LiteralPath $destination -Recurse -Force
-      } else {
-        $canCopy = $false
-      }
-    }
-    if ($canCopy -and $PSCmdlet.ShouldProcess($destination, "Copy skill '$($skill.Name)'")) {
-      Copy-Item -LiteralPath $skill.FullName -Destination $destination -Recurse -Force
-    }
-  }
-
-  Write-Host ('{0}: {1} skills synced (dev-circuit-ultra {2})' -f $target, $skills.Count, $version)
+  $env:PYTHONPATH = if ($env:PYTHONPATH) { "$tools;$env:PYTHONPATH" } else { $tools }
+  $exe = 'python'
+  $prefix = @('-m', 'devcircuit.cli')
 }
+
+$call = @($prefix) + @('sync')
+foreach ($item in $Target) { $call += @('--target', $item) }
+
+& $exe @call
+exit $LASTEXITCODE
