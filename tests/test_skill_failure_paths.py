@@ -40,6 +40,7 @@ def test_skill_ties_failure_behaviour_to_compatibility_tests_and_closeout():
 
     assert "必须有「失败行为」" in text
     assert "成功输出不变" in text
+    assert "只拒绝以前就会失败的输入" in text
     assert "照文档实测" in text
     done = section(text, "## 6. 完成标准")
     assert "失败行为" in done and "实际跑过" in done
@@ -52,6 +53,7 @@ def test_reviewer_triggers_failures_and_reads_only_its_rules():
     assert "不读 SKILL.md" in text
     assert "行为承诺不是措辞" in text
     assert "覆盖到的已有命令就算相关" in text
+    assert "以前能处理、样例里没有的输入" in text
     assert "失败路径：" in section(text, "## 输出")
 
 
