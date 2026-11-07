@@ -58,43 +58,30 @@
 
 ## 复现
 
-需要 Windows、PowerShell 7、Python 3、Node 22、pi、OpenSpec 1.15。
+需要 Python 3.10+、git、Node 22、pi、OpenSpec 1.15。脚本自己搭起点，不再需要手工敲一遍流程：
 
 ```powershell
-# 轻量、只读、继承当前模型的 reviewer（仅 benchmark 用）
-copy bench/open/reviewer-fast.md $HOME\.pi\agent\agents\reviewer-fast.md
+# 先看一眼它会做什么（不创建任何目录、不花 token）
+python bench/open/run_open_ab.py --dry-run --runs 3
 
-# Dev 起点
-pwsh -NoProfile -File <repo>/skills/dev-circuit-ultra/scripts/new-project.ps1 `
-  -Path <ab>/dev-circuit -Name records
-cp -r bench/fixture/. <ab>/dev-circuit/
-cp bench/open/AGENTS.md <ab>/dev-circuit/AGENTS.md
-mkdir <ab>/dev-circuit/.dev-circuit
-'{"mode":"agent","agent":"reviewer-fast"}' | Set-Content <ab>/dev-circuit/.dev-circuit/reviewer.json
-git -C <ab>/dev-circuit add -A
-git -C <ab>/dev-circuit commit -m "chore: add records fixture and reviewer default"
-git -C <ab>/dev-circuit tag bench-base
+# 三轮成对运行 + 盲评，结果落在 bench/out/open-<时间戳>/
+python bench/open/run_open_ab.py --runs 3
 
-# OpenSpec 起点
-pwsh -NoProfile -File <repo>/skills/dev-circuit-ultra/scripts/new-project.ps1 `
-  -Path <ab>/openspec -Name records
-cp -r bench/fixture/. <ab>/openspec/
-cp bench/open/AGENTS.md <ab>/openspec/AGENTS.md
-cd <ab>/openspec
-git add -A
-git commit -q -m "chore: add records fixture"
-openspec init --tools pi --language zh-CN --no-animation --no-copilot-cloud
-git add -A
-git commit --no-verify -m "chore: init openspec"
-git tag bench-base
-
-# 跑一次；根路径按需改 run_open_ab.py 的 ROOT
-python bench/open/run_open_ab.py --root <ab>
-
-# 生成图表
-python bench/make_ab_chart.py
+# 汇总（可把多个结果目录并在一起，得到 n>1 的中位数与配对差值）
+python bench/summarize.py bench/out/open-*
 ```
 
-原始会话输出在 `bench/out/open/`（不提交）；机器可读结果见 [results_open_ab.json](results_open_ab.json)。
+一轮做了什么：
+
+- 从 `bench/fixture` + 骨架生成两侧仓库，打 `bench-base` 标签，Dev 侧预置 `reviewer.json`（`--reviewer` 可换）。
+- 同一份 `open/prompt.md`、同一个模型，每侧一个 `pi -p` 会话；跑完把两侧从 `bench-base` 重置，所以多轮互不污染。
+- 每轮随机指定 A/B 并交换先后顺序（`--seed`），复制出只含 `A/`、`B/`、`problem.md`、`rubric.md` 的盲评目录交给另一个 `pi -p`，分数解析成 JSON 后按映射还原。
+- 记录耗时、成本、token、轮次、测试数、提交/未提交、留存文档行数；汇总表给中位数和区间，不把单一数字当结论。
+
+常用参数：`--no-judge` 只测指标、`--model`/`--thinking`/`--judge-model` 换模型、`--root` 复用固定目录、`--keep` 保留临时仓库、`--timeout` 单侧超时。
+
+原始会话输出在结果目录里（不提交）；上一轮的手写结果仍在 [results_open_ab.json](results_open_ab.json) 与 [open/judge-result.md](open/judge-result.md)。
+
+> OpenSpec 初始化用 `--no-verify`，是因为骨架的 `doc_guard` 会把 `openspec/changes/archive/` 当作禁止目录；这个 hook 不是 OpenSpec 侧的被测对象。
 
 > OpenSpec 初始化用 `--no-verify`，是因为骨架的 `doc_guard` 会把 `openspec/changes/archive/` 当作禁止目录；这个 hook 不是 OpenSpec 侧的被测对象。

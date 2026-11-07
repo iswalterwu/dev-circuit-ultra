@@ -7,6 +7,7 @@
 - `doc_guard --include GLOB`：把默认范围之外的 `.md` 也纳入扫描；ignore 优先于 include。
 - `spec_check` 的"已合并"提示跟随卡片语言：英文卡不再收到中文提示。
 - demo 增加工具调用层边界：hook 在读取之前拦下账本，绝对路径和相对路径都拦。
+- 开放 A/B 可以脚本化重跑：`bench/open/run_open_ab.py --runs N` 用 `--dry-run` 先看计划，跑完自动做随机 A/B 的盲评；`bench/summarize.py` 把多轮结果汇成中位数与配对差值。`tests/test_bench_harness.py` 用桩 `pi` / `openspec` 覆盖这套流程，不花 token。
 
 ## 0.4.0
 
