@@ -9,7 +9,8 @@ skill. It checks the methodology boundaries:
 - a private ledger outside the project;
 - discarded ideas only in the ledger;
 - a human-only brief that excludes discarded ideas;
-- doc_guard rejects a ledger directory in the project.
+- doc_guard rejects a ledger directory in the project;
+- the tool-layer hook blocks a read of the ledger before it happens.
 """
 
 from __future__ import annotations
@@ -319,13 +320,37 @@ def main() -> int:
         shutil.rmtree(bad)
         run([sys.executable, "scripts/doc_guard.py"], cwd=project)
 
+        # The tool-layer hook stops the same read before it happens.
+        hook = ROOT / "hooks" / "claude" / "ledger_guard.py"
+        write(project / ".dev-circuit" / "guard.json",
+              json.dumps({"ledger": str(ledger)}, ensure_ascii=False) + "\n")
+
+        def hook_verdict(tool_name: str, tool_input: dict) -> int:
+            payload = {"cwd": str(project), "tool_name": tool_name, "tool_input": tool_input}
+            return subprocess.run(
+                [sys.executable, str(hook)],
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            ).returncode
+
+        assert hook_verdict("Read", {"file_path": str(ledger / "entries" / "x.jsonl")}) == 2, \
+            "the hook should block a read of the ledger"
+        assert hook_verdict("Read", {"file_path": "../" + ledger.name + "/entries/x.jsonl"}) == 2, \
+            "the hook should block a relative path into the ledger"
+        assert hook_verdict("Read", {"file_path": str(project / "greet.py")}) == 0
+        checks.append("hook")
+
         final_spec = (project / "docs" / "requirements" / "greet.md").read_text(encoding="utf-8")
         print("PASS dev-circuit-ultra demo")
         print(f"project: {project}")
         print(f"ledger:  {ledger}")
         print(f"final spec lines: {len(final_spec.splitlines())}")
         print(f"checks: {', '.join(checks)}")
-        print("boundaries: no ledger in project; discarded idea only in ledger; guard rejects ledger dir")
+        print("boundaries: no ledger content in project (only a gitignored guard config); "
+              "discarded idea only in ledger; doc_guard rejects a ledger dir; hook blocks the read")
     return 0
 
 
