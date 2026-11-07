@@ -40,22 +40,53 @@ It does **not** maintain proposals, task lists or an archive, and it does not ke
 
 ## Quick start
 
-```powershell
-# 1. Sync the skill (Claude Code / agents / DeepSeek Harness directories)
-pwsh -NoProfile -File sync.ps1
+```bash
+# 1. Install the CLI (the only prerequisite; same on Windows, macOS and Linux)
+pipx install git+https://github.com/iswalterwu/dev-circuit-ultra   # not on PyPI yet
 
-# 2. Create a project
-pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-project.ps1 `
-  -Path D:\code\my-app -Name "My App"
+# 2. Sync the skill into the Claude Code / agents / DeepSeek Harness directories
+devcircuit sync
 
-# 3. Create the private ledger OUTSIDE the project
-pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
-  -Path D:\ledgers\my-app
+# 3. Create a project (--adopt fills the gaps in an existing repo)
+devcircuit init --path ~/code/my-app --name "My App"
+
+# 4. Create the private ledger OUTSIDE the project
+devcircuit ledger --path ~/ledgers/my-app
+
+# 5. Close the boundary at the tool-call layer
+devcircuit hooks install --harness pi --project ~/code/my-app --ledger ~/ledgers/my-app
 ```
+
+`sync.ps1`, `new-project.ps1` and `new-ledger.ps1` still work; they forward to the same implementation.
 
 Then start with design clarification inside the project. On the first feature, the skill asks once how to run the independent review (same model, a named reviewer agent, or ask again each feature) and saves the choice in `.dev-circuit/reviewer.json`. The ledger is a separate step; no `ledger/` appears in the project.
 
 Implementation: Markdown skill + Python 3 (`doc_guard` / `spec_check`) + PowerShell 7 (bootstrap) + git; no server component, Docker isolation optional.
+
+## The checks
+
+The two guards are single files you can copy into a project, and one command when you would rather install them:
+
+```bash
+devcircuit check --root .                 # doc + spec checks, one exit code
+devcircuit doc-guard --root .             # forbidden paths, history phrases, broken links
+devcircuit spec-check --root . --report   # requirement IDs, dangling refs, test coverage
+devcircuit rules                          # rule names for --ignore-rule
+```
+
+They stay usable in repositories that never heard of this loop:
+
+```bash
+devcircuit doc-guard --root ~/work/legacy-repo --ignore 'vendor/**' --ignore CHANGELOG.md
+devcircuit spec-check --root ~/work/openspec-repo --ignore-rule dangling-ref
+```
+
+- `--ignore GLOB` and a `.dcuignore` file (one glob per line) whitelist false positives; a glob without a slash matches any path segment. Both `/` and `\` work as separators, case is ignored on Windows and significant elsewhere, and there is no `!` negation.
+- `--ignore-rule NAME` drops one rule; `devcircuit rules` lists them.
+- Inline `doc-guard:ignore`, `doc-guard:off` / `doc-guard:on` suppress a line or a block.
+- Code fences are not treated as document claims.
+- Requirement definitions are recognised as `-`, `*`, `+`, `1.`, bold-prefixed or table rows; change entries accept English verbs (`add` / `modify` / `remove`) and sections accept `## Spec changes`.
+- The guards are pure Python 3.10+ with no dependencies; CI runs both Windows and Ubuntu.
 
 ## DeepSeek Harness
 
@@ -81,22 +112,34 @@ The demo creates a throwaway project and an external ledger. It exercises destru
 
 ## Isolation
 
-A prompt that says "do not read the ledger" is **not** isolation. To guarantee it:
+A prompt that says "do not read the ledger" is **not** isolation. Four levels, different costs and guarantees:
 
 | Level | Setup | Guarantee |
 |---|---|---|
 | Weak | prompt convention | prevents accidental reads only |
-| Medium | private repo outside the project; no path in project | prevents accidental reads, not a determined same-user process |
-| **Strong** | separate containers/OS users; dev has no ledger mount or credentials | the dev process has no read permission |
+| **Medium (default)** | `devcircuit hooks install`: block at the tool-call layer | the agent cannot get the ledger through a tool call; cross-platform, reviewable |
+| Strong | the ledger is owned by another OS user / an ACL the dev process lacks | the dev process has no read permission |
+| Strongest | separate containers; dev has no ledger mount or credentials | nothing to reach inside the process |
 
-Strong isolation is recommended. See [`docker/compose.yaml`](docker/compose.yaml):
+The hook lives in the project and reads `<project>/.dev-circuit/guard.json` (a machine-local path — keep it out of git):
+
+```bash
+devcircuit hooks install --harness pi --project ~/code/my-app --ledger ~/ledgers/my-app
+devcircuit hooks status --project ~/code/my-app
+```
+
+It also denies reads of `guard.json` itself, because that file names the ledger.
+
+What the hook cannot do: the dev process still runs as the same OS user, so a command that never names the ledger path can still walk the filesystem. For that guarantee go stronger. Details: [`hooks/README.md`](hooks/README.md).
+
+Strongest level, reference topology in [`docker/compose.yaml`](docker/compose.yaml):
 
 - `dev`: project only; no `/ledger`; no ledger remote credentials; no Docker socket.
 - `archivist`: project read-only + ledger writable; append-only; no product edits.
 - `ledger`: ledger read-only; for human queries.
 - The ledger remote must be private; credentials only in the archivist/human environment.
 
-Full boundary and verification commands: [docs/ledger.md](docs/ledger.md) and [docker/README.md](docker/README.md).
+Full boundary and verification commands: [docs/ledger.md](docs/ledger.md) and [hooks/README.md](hooks/README.md).
 
 ## How it differs from OpenSpec
 
@@ -144,7 +187,7 @@ Stop and ask the human. The human queries the ledger with `dev-circuit-ledger`, 
 
 **Can the dev agent read the ledger?**
 
-Not under strong isolation: no mount, no path, no credentials. Weak/medium setups are conventions, not guarantees.
+Through a tool call, no: the hook from `devcircuit hooks install` blocks every tool input that names the ledger (or the guard config). For a filesystem-level guarantee, run the dev process under its own OS user or in a container with no ledger mount. A prompt convention alone guarantees nothing.
 
 **Why keep a design at all?**
 
@@ -162,8 +205,9 @@ Enough to cover the design's boundaries/contracts. Tests are evidence, not a dec
 
 - [SKILL.md](skills/dev-circuit-ultra/SKILL.md): full workflow, rules and templates
 - [docs/ledger.md](docs/ledger.md): boundaries, isolation and verification commands
+- [hooks/README.md](hooks/README.md): the four isolation levels and how the hooks work
 - [docs/dsh.md](docs/dsh.md): DeepSeek Harness install, compatibility and Store publishing
-- [docker/README.md](docker/README.md): dev / archivist / ledger container reference
+- [docker/README.md](docker/README.md): the strongest level — dev / archivist / ledger containers
 - [demo/README.md](demo/README.md): deterministic end-to-end demo
 - [bench/README.md](bench/README.md): the latest open A/B, blind rubric and measured savings
 

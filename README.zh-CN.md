@@ -40,22 +40,53 @@ Dev-circuit-ultra 是一套面向独立开发者的功能开发循环，以 skil
 
 ## 快速开始
 
-```powershell
-# 1. 同步 skill（Claude Code / agents / DeepSeek Harness 目录）
-pwsh -NoProfile -File sync.ps1
+```bash
+# 1. 安装 CLI（唯一前置；Windows / macOS / Linux 相同）
+pipx install git+https://github.com/iswalterwu/dev-circuit-ultra   # 还没发布到 PyPI
 
-# 2. 新建项目
-pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-project.ps1 `
-  -Path D:\code\my-app -Name "My App"
+# 2. 同步技能到 Claude Code / agents / DeepSeek Harness 目录
+devcircuit sync
 
-# 3. 在项目外创建私有账本（不要放进项目）
-pwsh -NoProfile -File skills/dev-circuit-ultra/scripts/new-ledger.ps1 `
-  -Path D:\ledgers\my-app
+# 3. 新建项目（已有仓库用 --adopt 只补缺失文件）
+devcircuit init --path ~/code/my-app --name "My App"
+
+# 4. 在项目外创建私有账本（不要放进项目）
+devcircuit ledger --path ~/ledgers/my-app
+
+# 5. 在工具调用层封住边界
+devcircuit hooks install --harness pi --project ~/code/my-app --ledger ~/ledgers/my-app
 ```
+
+`sync.ps1`、`new-project.ps1`、`new-ledger.ps1` 仍然可用，它们只是转发到同样的实现。
 
 然后在项目里用 `dev-circuit-ultra` skill 开始设计澄清。第一次做功能时，skill 会先问一次独立审核怎么做（同模型、指定 reviewer agent，或每个功能再问），并把选择写进 `.dev-circuit/reviewer.json`。账本初始化是单独一步，项目里不会出现 `ledger/`。
 
 实现：Markdown skill + Python 3（`doc_guard` / `spec_check`）+ PowerShell 7（初始化）+ git；没有服务端组件，强隔离可选 Docker。
+
+## 两个检查器
+
+两个脚本仍然是单文件、可直接拷进项目跑；不想拷就用一条命令装：
+
+```bash
+devcircuit check --root .                 # 两个检查，一个退出码
+devcircuit doc-guard --root .             # 禁止路径、历史短语、断链
+devcircuit spec-check --root . --report   # 要求编号、悬空引用、测试覆盖
+devcircuit rules                          # 配合 --ignore-rule 用的规则名
+```
+
+它们也能用在不接受这套流程的仓库里：
+
+```bash
+devcircuit doc-guard --root ~/work/legacy-repo --ignore 'vendor/**' --ignore CHANGELOG.md
+devcircuit spec-check --root ~/work/openspec-repo --ignore-rule dangling-ref
+```
+
+- `--ignore GLOB` 和 `.dcuignore` 文件（一行一个 GLOB）用来白名单误杀；不含斜杠的 GLOB 匹配任意路径段；`/` 和 `\` 都算分隔符；Windows 忽略大小写、其他系统区分；没有 `!` 取反。
+- `--ignore-rule NAME` 忽略单条规则；`devcircuit rules` 列出全部规则名。
+- 行内 `doc-guard:ignore`、`doc-guard:off` / `doc-guard:on` 忽略一行或一段。
+- 代码围栏里的内容不再当作文档主张检查。
+- 要求定义认 `-`、`*`、`+`、`1.`、加粗前缀和表格行；变化条目认英文动词（`add` / `modify` / `remove`），章节认 `## Spec changes`。
+- 检查器是纯 Python 3.10+，没有依赖；CI 同时跑 Windows 和 Ubuntu。
 
 ## DeepSeek Harness
 
@@ -81,22 +112,34 @@ demo 在临时目录里建一个项目和一个项目外的账本，演示：设
 
 ## 强隔离
 
-只在 prompt 里写“不要读账本”**不算隔离**。要保证开发 agent 读不到，至少做到：
+只在 prompt 里写“不要读账本”**不算隔离**。分四档，成本和保证各不相同：
 
 | 级别 | 做法 | 能保证什么 |
 |---|---|---|
 | 弱 | prompt 约定 | 只能防误读 |
-| 中 | 账本放独立私有 repo，项目里不写路径 | 防误读，不防同用户翻找 |
-| **强** | dev / archivist 分容器或分 OS 用户；dev 不挂载账本、无凭证 | 开发进程没有读权限 |
+| **中（默认）** | `devcircuit hooks install`：在工具调用层拦 | agent 拿不到账本；跨平台、可审查 |
+| 强 | 账本属主是另一个 OS 用户 / ACL 不授权给开发进程 | 开发进程没有读权限 |
+| 最强 | dev / archivist 分容器；dev 不挂载账本、无凭证 | 进程内没有可达路径 |
 
-推荐强隔离。参考 [`docker/compose.yaml`](docker/compose.yaml)：
+hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，加进 `.gitignore`）：
+
+```powershell
+devcircuit hooks install --harness pi --project D:\code\my-app --ledger D:\ledgers\my-app
+devcircuit hooks status --project D:\code\my-app
+```
+
+它也不许 agent 读 `guard.json` 本身——那里面就有账本路径。
+
+hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不用账本路径的命令（遍历文件系统）仍可能发现可读目录。要那种保证，往强/最强走。完整说明见 [`hooks/README.md`](hooks/README.md)。
+
+最强级别参考 [`docker/compose.yaml`](docker/compose.yaml)：
 
 - `dev`：只挂项目；没有 `/ledger`；没有账本 remote 凭证；没有 Docker socket。
 - `archivist`：项目只读 + 账本读写；只追加，不改项目。
 - `ledger`：账本只读；供 human 查询。
 - 账本 remote 必须私有；凭证只在 archivist/human 环境。
 
-完整边界和验证命令见 [docs/ledger.md](docs/ledger.md) 与 [docker/README.md](docker/README.md)。
+完整边界和验证命令见 [docs/ledger.md](docs/ledger.md) 与 [hooks/README.md](hooks/README.md)。
 
 ## 和 OpenSpec 的区别
 
@@ -144,7 +187,7 @@ demo 在临时目录里建一个项目和一个项目外的账本，演示：设
 
 **账本会不会被开发 agent 读到？**
 
-强隔离下不会：dev 容器没有账本挂载、没有路径、没有凭证。弱/中隔离只是约定，不是保证。
+通过工具调用读不到：`devcircuit hooks install` 装的 hook 会拦下所有提到账本路径（或 guard.json）的工具参数。要文件系统级的保证，就让开发进程跑在另一个 OS 用户下，或用不挂载账本的容器。只写 prompt 约定则什么都保证不了。
 
 **为什么还要写设计？**
 
@@ -161,9 +204,10 @@ demo 在临时目录里建一个项目和一个项目外的账本，演示：设
 ## 文档
 
 - [SKILL.md](skills/dev-circuit-ultra/SKILL.md)：完整流程、规则和模板说明
-- [docs/ledger.md](docs/ledger.md)：两条边界、强隔离和验证命令
+- [docs/ledger.md](docs/ledger.md)：两条边界、隔离分级和验证命令
+- [hooks/README.md](hooks/README.md)：四档隔离与 hook 的工作方式
 - [docs/dsh.md](docs/dsh.md)：DeepSeek Harness 安装、兼容性与 Store 发布
-- [docker/README.md](docker/README.md)：dev / archivist / ledger 容器参考
+- [docker/README.md](docker/README.md)：最强一级——dev / archivist / ledger 容器参考
 - [demo/README.md](demo/README.md)：确定性的端到端演示
 - [bench/README.md](bench/README.md)：最新开放 A/B、盲评和节省数据
 

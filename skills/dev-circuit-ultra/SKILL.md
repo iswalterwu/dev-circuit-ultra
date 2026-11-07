@@ -4,7 +4,7 @@ description: 设计驱动的功能开发循环：设计澄清 → 单个切片 �
 whenToUse: 当用户要在项目里做功能、修 bug、改文档、接手进行中的功能、做设计澄清、拆切片、做审核，或要新建/接入 dev-circuit-ultra 时使用。
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   author: iswalterwu
   homepage: https://github.com/iswalterwu/dev-circuit-ultra
 ---
@@ -29,6 +29,8 @@ metadata:
 - **human**：唯一能同时看两边的人；需要历史时，由 human 让 `dev-circuit-ledger` 生成最小 brief，再决定是否交给开发 agent。
 
 开发 agent 不运行 archivist，也不读账本。需要历史时停下来问用户。
+
+边界靠机制，不靠这句说明：装了 `devcircuit hooks install` 的项目，hook 会在工具调用层拦掉所有提到账本路径或 `.dev-circuit/guard.json` 的调用。没装时，"不读账本"只是约定；命中拦截说明配置生效，不要绕开它，也不要读 `guard.json` 找路径。
 
 ## 1. 开工
 
@@ -170,7 +172,7 @@ metadata:
 
 - **收尾放在最后一个切片里做**；普通功能在收尾文档合并后、最终提交前做最终审核，通过后再提交/删卡。最后一个切片的步骤要包括：
   - 把"规格变化"合并进 `docs/requirements/<能力>.md`；
-  - 合并后，把卡里这一节的标题改成 `## 规格变化（已合并）`；spec_check 只检查标题恰好是 `## 规格变化` 的节；
+  - 合并后，把卡里这一节的标题改成 `## 规格变化（已合并）`（英文卡用 `## Spec changes (merged)`）；spec_check 只检查标题恰好是 `## 规格变化` 或 `## Spec changes` 的节；
   - 框架级：把 `design.md` 里仍然有效的结构、边界和关键决定，并入 `docs/architecture.md`（每个关键决定可以附一句现行理由）。
   - 由 human/orchestrator 在项目外让 archivist 记录被删除/被替代的设计决策；开发 agent 不写账本，也不读账本。
 - 给用户的验收说明：
@@ -265,11 +267,15 @@ metadata:
 
 项目初始化和账本初始化是两件事，账本永远在项目外。
 
-最快的方式是运行本技能目录里的脚本：
+最快的方式是运行 `devcircuit` CLI（`pipx install git+https://github.com/iswalterwu/dev-circuit-ultra`）：
 
-- **新建**：`pwsh -NoProfile -File <本技能目录>/scripts/new-project.ps1 -Path <项目目录> -Name <项目名>`。它会生成下面第 1–5 步的全部文件，执行 `git init`，并做第一次提交。
-- **接入已有仓库**：同一命令加 `-Adopt`。它只补缺失的文件，已有文件不覆盖，也不提交，最后会报出 doc_guard 发现的旧文档问题。
-- **账本**：用 `scripts/new-ledger.ps1 -Path <项目外的私有目录>` 创建独立私有 git repo；不要把账本放进项目，也不要让开发容器挂载它。
+- **同步技能**：`devcircuit sync`，把三个技能写进 Claude Code / agents / DSH 目录。
+- **新建**：`devcircuit init --path <项目目录> --name <项目名>`。它会生成下面第 1–5 步的全部文件，执行 `git init`，并做第一次提交。
+- **接入已有仓库**：同一命令加 `--adopt`。它只补缺失的文件，已有文件不覆盖，也不提交，最后会报出 doc_guard 发现的旧文档问题。
+- **账本**：`devcircuit ledger --path <项目外的私有目录>` 创建独立私有 git repo；不要把账本放进项目，也不要让开发容器挂载它。
+
+本技能目录里的 `new-project.ps1`、`new-ledger.ps1` 和仓库根目录的 `sync.ps1` 只是转发到同样的实现，供 pwsh 用户使用。
+- **边界**：`devcircuit hooks install --harness pi|claude --project <项目> --ledger <账本>`；它写 `.dev-circuit/guard.json`（本机路径，加进 `.gitignore`）并装上 hook。
 
 跑完脚本后，仍要填写 AGENTS.md 里的项目事实。不用脚本时，按下面的步骤手动做：
 
@@ -278,7 +284,8 @@ metadata:
 3. 建 `specs/` 目录，把 `templates/backlog.md` 放进去，改名为 `specs/backlog.md`。
 4. 建 `docs/requirements/`，放入 `templates/project/docs/requirements/README.md`；以后每个能力一份规格，按 `templates/requirements.md` 写。
 5. 设置检查：
-   - 把 `scripts/doc_guard.py` 和 `scripts/spec_check.py` 复制到项目的 `scripts/`；
+   - 把 `scripts/doc_guard.py` 和 `scripts/spec_check.py` 复制到项目的 `scripts/`（也可以改用 `pipx install git+https://github.com/iswalterwu/dev-circuit-ultra` 后跑 `devcircuit check`）；
+  - 新建 `.dcuignore`（可以只有注释）：误杀时用它或 `--ignore` 加白名单，不要关掉检查；
    - 新建 `.githooks/pre-commit` 依次运行这两个脚本，然后执行 `git config core.hooksPath .githooks`；
    - CI 里也加上这两步。
 6. 长文档按 `templates/doc-header.md` 加上"读我"块。
