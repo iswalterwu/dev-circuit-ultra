@@ -10,6 +10,8 @@
   .dcuignore              项目根目录的忽略清单，一行一个 GLOB，# 开头为注释（与 .gitignore 类似）
   --ignore-rule RULE      忽略某条规则，可重复；--list-rules 查看规则名
   行内抑制                行内写 doc-guard:ignore 只忽略该行；doc-guard:off / doc-guard:on 忽略一段
+  --include GLOB          额外把这些 .md 也当文档扫（如 --include notes，默认只扫 docs/specs/design
+                          和浅层 README）
 
 代码围栏内的内容不做检查：示例命令和哈希不是文档主张。
 """
@@ -92,8 +94,8 @@ def _fold(value: str) -> str:
     return value.casefold() if os.name == "nt" else value
 
 
-def path_is_ignored(relative: str, patterns) -> bool:
-    """Match a posix relative path against ignore globs.
+def matches(relative: str, patterns) -> bool:
+    """Match a posix relative path against path globs (used for ignore and include).
 
     Patterns accept `/` or `\\` as the separator. A pattern with a separator
     matches from the project root; a pattern without one matches any single
@@ -119,6 +121,8 @@ def path_is_ignored(relative: str, patterns) -> bool:
                 return True
     return False
 
+
+path_is_ignored = matches  # the previous name, kept for callers
 
 def load_ignore_file(path: Path) -> list[str]:
     """Read one glob per line; blank lines and # comments are skipped."""
@@ -146,7 +150,9 @@ def _is_forbidden_file(relative: Path) -> bool:
     )
 
 
-def _is_scanned_doc(relative: Path) -> bool:
+def _is_scanned_doc(relative: Path, includes=()) -> bool:
+    if includes and relative.suffix == ".md" and matches(relative.as_posix(), includes):
+        return True
     parts = relative.parts
     return (
         relative.suffix == ".md" and (
@@ -155,7 +161,8 @@ def _is_scanned_doc(relative: Path) -> bool:
     ) or (relative.name == "README.md" and len(parts) in {2, 3})
 
 
-def _walk(root: Path, directory: Path, findings: list[Finding], patterns) -> list[Path]:
+def _walk(root: Path, directory: Path, findings: list[Finding], patterns,
+          includes=()) -> list[Path]:
     documents: list[Path] = []
     for path in sorted(directory.iterdir()):
         relative = path.relative_to(root)
@@ -167,13 +174,13 @@ def _walk(root: Path, directory: Path, findings: list[Finding], patterns) -> lis
             if _is_forbidden_dir(relative):
                 findings.append(Finding("forbidden-path", relative.as_posix(), 0, "禁止的目录"))
                 continue
-            documents.extend(_walk(root, path, findings, patterns))
+            documents.extend(_walk(root, path, findings, patterns, includes))
         elif path.is_file():
             if path_is_ignored(relative.as_posix(), patterns):
                 continue
             if _is_forbidden_file(relative):
                 findings.append(Finding("forbidden-path", relative.as_posix(), 0, "禁止的文件"))
-            if _is_scanned_doc(relative):
+            if _is_scanned_doc(relative, includes):
                 documents.append(path)
     return documents
 
@@ -240,10 +247,11 @@ def _scan_document(document: Path, root: Path) -> list[Finding]:
 
 
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
-         use_ignore_file: bool = True) -> list[Finding]:
+         use_ignore_file: bool = True, includes=()) -> list[Finding]:
     """Report forbidden paths and content under a project root.
 
-    `ignores` are path globs; `ignored_rules` are rule names from RULES. When
+    `ignores` are path globs; `ignored_rules` are rule names from RULES; `includes`
+    are extra .md path globs to scan beyond the default scope. When
     `use_ignore_file` is true and a `.dcuignore` exists under `root` (or at
     `ignore_file`), its patterns are added.
     """
@@ -255,7 +263,7 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
             patterns.extend(load_ignore_file(candidate))
 
     findings: list[Finding] = []
-    documents = _walk(root, root, findings, patterns)
+    documents = _walk(root, root, findings, patterns, includes)
     for document in documents:
         findings.extend(_scan_document(document, root))
 
@@ -274,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="ignore a relative path glob (repeatable)")
     parser.add_argument("--ignore-rule", action="append", default=[], choices=RULES,
                         help="ignore one rule (repeatable)")
+    parser.add_argument("--include", action="append", default=[], metavar="GLOB",
+                        help="also scan matching .md files outside the default scope (repeatable)")
     parser.add_argument("--ignore-file", type=Path, default=None,
                         help=f"read extra globs from this file (default: <root>/{IGNORE_FILE})")
     parser.add_argument("--no-ignore-file", action="store_true",
@@ -296,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     findings = scan(args.root, args.ignore, args.ignore_rule, args.ignore_file,
-                    not args.no_ignore_file)
+                    not args.no_ignore_file, args.include)
     if args.json:
         print(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False))
     else:

@@ -267,3 +267,17 @@ def test_explicit_ignore_file_must_exist(tmp_path: Path, capsys) -> None:
 
     assert main(["--root", str(tmp_path), "--ignore-file", str(tmp_path / "missing.txt")]) == 2
     assert "不存在" in capsys.readouterr().err
+
+
+def test_include_scans_extra_docs(tmp_path: Path, capsys) -> None:
+    write(tmp_path, "notes/scratch.md", "decision log\n")
+    write(tmp_path, "app/README.md", "clean\n")
+
+    assert scan(tmp_path) == []
+    assert [finding.path for finding in scan(tmp_path, includes=["notes"])] == ["notes/scratch.md"]
+    assert [finding.path for finding in scan(tmp_path, includes=["**/scratch.md"])] == [
+        "notes/scratch.md",
+    ]
+    assert scan(tmp_path, includes=["notes"], ignores=["notes"]) == []
+    assert main(["--root", str(tmp_path), "--include", "notes"]) == 1
+    assert "[bookkeeping-phrase]" in capsys.readouterr().out

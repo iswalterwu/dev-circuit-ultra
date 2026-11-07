@@ -73,6 +73,14 @@ ACTIVE_SECTIONS = frozenset(
     )
 )
 MERGED_HINT = "（如果是本卡收尾已合并，把本节标题改为'## 规格变化（已合并）'）"
+MERGED_HINT_EN = (" (if this card's closeout already merged this section, "
+                  "rename the heading to '## Spec changes (merged)')")
+CJK = re.compile(r"[一-鿿]")
+
+
+def merged_hint(english: bool) -> str:
+    """Keep the hint in the card's language."""
+    return MERGED_HINT_EN if english else MERGED_HINT
 BAD_CHANGE = ("规格变化条目格式不对：应以 '- 新增 <编号>'、'- 修改 <编号>' 或 '- 删除 <编号>' 开头"
               "（英文可用 '- add <ID>' 等）")
 
@@ -206,13 +214,16 @@ def _changes(root: Path, findings: list[Finding], patterns=()):
         relative = path.relative_to(root).as_posix()
         if path_is_ignored(relative, patterns):
             continue
+        text = path.read_text(encoding="utf-8-sig")
+        english = CJK.search(text) is None
         in_section = False
-        for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+        for number, line in enumerate(text.splitlines(), 1):
             if line.startswith("## "):
                 in_section = line.strip().casefold() in ACTIVE_SECTIONS
             elif in_section and re.match(BULLET, line):
                 if match := CHANGE.match(line):
-                    yield relative, number, _normalized_action(match.group(1)), match.group(2)
+                    yield (relative, number, _normalized_action(match.group(1)),
+                           match.group(2), english)
                 else:
                     findings.append(Finding("bad-change", relative, number, BAD_CHANGE))
 
@@ -261,7 +272,8 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
     findings, codes, requirements, legacy, _ = _requirements(root, patterns)
     added: set[str] = set()
     changed_by: dict[str, str] = {}
-    for path, number, action, identifier in _changes(root, findings, patterns):
+    for path, number, action, identifier, english in _changes(root, findings, patterns):
+        hint = merged_hint(english)
         if identifier in changed_by and changed_by[identifier] != path:
             findings.append(Finding("conflict", path, number,
                                     f"编号同时出现在另一张卡：{identifier}（{changed_by[identifier]}）"))
@@ -274,12 +286,12 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
             elif identifier.split("-", 1)[0] not in codes:
                 findings.append(Finding("unknown-code", path, number, f"代号未声明：{identifier}"))
             elif identifier in requirements:
-                findings.append(Finding("id-exists", path, number, f"编号已存在：{identifier}{MERGED_HINT}"))
+                findings.append(Finding("id-exists", path, number, f"编号已存在：{identifier}{hint}"))
             else:
                 added.add(identifier)
         elif identifier not in requirements and identifier not in legacy:
-            hint = MERGED_HINT if action == "删除" else ""
-            findings.append(Finding("unknown-target", path, number, f"目标编号不存在：{identifier}{hint}"))
+            tail = hint if action == "删除" else ""
+            findings.append(Finding("unknown-target", path, number, f"目标编号不存在：{identifier}{tail}"))
     for path, number, identifier in _references(root, codes, patterns):
         if identifier in requirements or identifier in added or identifier in legacy:
             continue

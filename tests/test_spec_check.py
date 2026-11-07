@@ -344,3 +344,23 @@ def test_legacy_reference_must_exist(tmp_path):
     assert [(f.rule, f.message) for f in scan(tmp_path)] == [
         ("dangling-ref", "引用的编号不存在：DEMO:AC-009-9"),
     ]
+
+
+def test_merged_hint_follows_the_card_language(tmp_path, capsys):
+    write(tmp_path, "docs/requirements/demo.md", "Code: DEMO\n- DEMO-1: one\n")
+    write(tmp_path, "specs/add/spec.md", "## Spec changes\n- add DEMO-1: merged already\n")
+
+    assert main(["--root", str(tmp_path), "--json"]) == 1
+    finding = json.loads(capsys.readouterr().out)[0]
+    assert finding["rule"] == "id-exists"
+    assert "Spec changes (merged)" in finding["message"]
+    assert "规格变化" not in finding["message"]
+
+
+def test_chinese_cards_keep_the_chinese_hint(tmp_path, capsys):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "specs/add/spec.md", "## 规格变化\n- 新增 DEMO-1：已合并\n")
+
+    assert main(["--root", str(tmp_path), "--json"]) == 1
+    finding = json.loads(capsys.readouterr().out)[0]
+    assert "规格变化（已合并）" in finding["message"]
