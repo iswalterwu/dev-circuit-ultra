@@ -4,6 +4,7 @@
 functions, so the behaviour lives in one place and works on every platform.
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from ._loader import load_script, skill_root
 
+HOOK_FILE = ".githooks/pre-commit"
 HOOK_RULE = ".githooks/** text eol=lf"
 AUTO_RULE = "* text=auto eol=lf"
 
@@ -40,6 +42,12 @@ def read_template(relative: str) -> str:
     if not path.is_file():
         raise ScaffoldError(f"模板缺失：{path}")
     return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+
+
+def make_executable(path: Path) -> None:
+    """The pre-commit hook has to be executable in the working tree, not only in the index."""
+    if os.name != "nt" and path.is_file():
+        path.chmod(path.stat().st_mode | 0o111)
 
 
 def git(root: Path, *args: str) -> str:
@@ -112,6 +120,7 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
             content = content.replace("<项目名>", project_name)
         _write_missing(root, relative, content, created, skipped)
     _ensure_gitattributes(root, adopt, created, skipped)
+    make_executable(root / HOOK_FILE)
 
     if not adopt:
         git(root, "init", "-q", "-b", "main")
@@ -125,10 +134,16 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
         if spec_exit != 0:
             raise ScaffoldError("新项目骨架没有通过 spec_check，请检查模板。")
         git(root, "add", "-A")
-        git(root, "update-index", "--chmod=+x", ".githooks/pre-commit")
-        git(root, "commit", "-q",
-            "-m", "chore: 初始化 dev-circuit-ultra 项目骨架",
-            "-m", "为什么：从第一天起使用 dev-circuit-ultra 的短入口、设计澄清和防回流检查。")
+        git(root, "update-index", "--chmod=+x", HOOK_FILE)
+        try:
+            git(root, "commit", "-q",
+                "-m", "chore: 初始化 dev-circuit-ultra 项目骨架",
+                "-m", "为什么：从第一天起使用 dev-circuit-ultra 的短入口、设计澄清和防回流检查。")
+        except ScaffoldError as error:
+            raise ScaffoldError(
+                f"{error}\n文件已生成、仓库已初始化并暂存，只差首次提交。"
+                "配置 git user.name / git user.email 后运行："
+                f"\ngit -C {root} commit -m 'chore: 初始化 dev-circuit-ultra 项目骨架'") from error
 
     out = sys.stdout
     print(f"项目：{root}", file=out)

@@ -234,3 +234,32 @@ def test_ledger_and_sync(tmp_path: Path, capsys) -> None:
         assert (skills / name / "SKILL.md").is_file()
     assert not list(skills.rglob("__pycache__"))
     assert "skills synced" in capsys.readouterr().out
+
+
+def test_init_reports_a_missing_git_identity(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = tmp_path / "app"
+    for variable in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME",
+                     "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-such-config"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "no-such-config"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 2
+    err = capsys.readouterr().err
+    assert "git user.name" in err
+    assert (project / "AGENTS.md").is_file()
+
+
+def test_pre_commit_hook_is_executable_and_clean(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    project = tmp_path / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    if os.name != "nt":
+        assert os.access(project / ".githooks" / "pre-commit", os.X_OK)
+    status = subprocess.run(["git", "-C", str(project), "status", "--short"],
+                            capture_output=True, text=True, encoding="utf-8")
+    assert status.stdout.strip() == ""
