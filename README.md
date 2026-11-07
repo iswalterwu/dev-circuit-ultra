@@ -82,6 +82,7 @@ devcircuit spec-check --root ~/work/openspec-repo --ignore-rule dangling-ref
 ```
 
 - `--ignore GLOB` and a `.dcuignore` file (one glob per line) whitelist false positives; a glob without a slash matches any path segment. Both `/` and `\` work as separators, case is ignored on Windows and significant elsewhere, and there is no `!` negation.
+- `--include GLOB` widens the scan to `.md` files outside the default scope (`docs/`, `specs/`, `design/` and shallow READMEs); ignore beats include.
 - `--ignore-rule NAME` drops one rule; `devcircuit rules` lists them.
 - Inline `doc-guard:ignore`, `doc-guard:off` / `doc-guard:on` suppress a line or a block.
 - Code fences are not treated as document claims.
@@ -206,6 +207,7 @@ Enough to cover the design's boundaries/contracts. Tests are evidence, not a dec
 - [SKILL.md](skills/dev-circuit-ultra/SKILL.md): full workflow, rules and templates
 - [docs/ledger.md](docs/ledger.md): boundaries, isolation and verification commands
 - [hooks/README.md](hooks/README.md): the four isolation levels and how the hooks work
+- [CHANGELOG.md](CHANGELOG.md): user-visible changes per release
 - [docs/dsh.md](docs/dsh.md): DeepSeek Harness install, compatibility and Store publishing
 - [docker/README.md](docker/README.md): the strongest level — dev / archivist / ledger containers
 - [demo/README.md](demo/README.md): deterministic end-to-end demo

@@ -33,6 +33,7 @@
     "tools",
     "pyproject.toml",
     "docs/ledger.md",
+    "CHANGELOG.md",
     "README.md",
     "README.zh-CN.md",
     "LICENSE",

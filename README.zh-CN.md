@@ -82,6 +82,7 @@ devcircuit spec-check --root ~/work/openspec-repo --ignore-rule dangling-ref
 ```
 
 - `--ignore GLOB` 和 `.dcuignore` 文件（一行一个 GLOB）用来白名单误杀；不含斜杠的 GLOB 匹配任意路径段；`/` 和 `\` 都算分隔符；Windows 忽略大小写、其他系统区分；没有 `!` 取反。
+- `--include GLOB` 把默认范围之外的 `.md` 也纳入扫描（默认只扫 `docs/`、`specs/`、`design/` 和浅层 README）；ignore 优先于 include。
 - `--ignore-rule NAME` 忽略单条规则；`devcircuit rules` 列出全部规则名。
 - 行内 `doc-guard:ignore`、`doc-guard:off` / `doc-guard:on` 忽略一行或一段。
 - 代码围栏里的内容不再当作文档主张检查。
@@ -206,6 +207,7 @@ hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不�
 - [SKILL.md](skills/dev-circuit-ultra/SKILL.md)：完整流程、规则和模板说明
 - [docs/ledger.md](docs/ledger.md)：两条边界、隔离分级和验证命令
 - [hooks/README.md](hooks/README.md)：四档隔离与 hook 的工作方式
+- [CHANGELOG.md](CHANGELOG.md)：每个版本对使用者有影响的变化
 - [docs/dsh.md](docs/dsh.md)：DeepSeek Harness 安装、兼容性与 Store 发布
 - [docker/README.md](docker/README.md)：最强一级——dev / archivist / ledger 容器参考
 - [demo/README.md](demo/README.md)：确定性的端到端演示
