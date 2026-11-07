@@ -1,6 +1,6 @@
 {
   "name": "dev-circuit-ultra",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Less context. Less ceremony. More shipping. A design-first five-step loop for coding agents.",
   "type": "module",
   "main": "index.js",
@@ -29,6 +29,9 @@
     "demo",
     "docker",
     "docs/dsh.md",
+    "hooks",
+    "tools",
+    "pyproject.toml",
     "docs/ledger.md",
     "README.md",
     "README.zh-CN.md",
