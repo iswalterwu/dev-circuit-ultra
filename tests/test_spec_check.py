@@ -236,3 +236,111 @@ def test_report_and_cli(tmp_path, capsys):
     assert items[0]["rule"] == "dangling-ref"
     assert main(["--root", str(tmp_path / "absent")]) == 2
     assert main(["--invalid"]) == 2
+def test_english_specs(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "Code: DEMO\n- DEMO-1: one\n")
+    write(tmp_path, "specs/add/spec.md", "## Spec changes\n- add DEMO-2: two\n- modify DEMO-1: tweak\n")
+    write(tmp_path, "tests/test_demo.py", "def test_demo():\n    assert 'DEMO-1' and 'DEMO-2'\n")
+
+    assert scan(tmp_path) == []
+
+
+def test_english_merged_heading_is_inactive(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "capability: DEMO\n- DEMO-1: one\n")
+    write(tmp_path, "specs/change/spec.md", "## Specification changes (merged)\n- add DEMO-1: exists\n")
+
+    assert scan(tmp_path) == []
+
+
+def test_relaxed_definition_shapes(tmp_path):
+    write(
+        tmp_path,
+        "docs/requirements/demo.md",
+        "code: DEMO\n"
+        "\n"
+        "- DEMO-1：one\n"
+        "* DEMO-2: two\n"
+        "+ DEMO-3：three\n"
+        "1. DEMO-4: four\n"
+        "- **DEMO-5**：five\n"
+        "| DEMO-6 | six |\n",
+    )
+    write(tmp_path, "tests/test_demo.py", "# DEMO-1 DEMO-2 DEMO-3 DEMO-4 DEMO-5 DEMO-6\n")
+
+    assert scan(tmp_path) == []
+
+
+def test_change_bullets_accept_other_markers(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(
+        tmp_path,
+        "specs/change/spec.md",
+        "## 规格变化\n"
+        "1. 修改 DEMO-1：x\n"
+        "* 新增 DEMO-2：y\n"
+        "- 删除 DEMO-9：missing\n",
+    )
+    write(tmp_path, "tests/test_demo.py", "# DEMO-2\n")
+
+    assert [(f.rule, f.line) for f in scan(tmp_path)] == [("unknown-target", 4)]
+
+
+def test_nested_bullets_are_notes_not_entries(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
+    write(tmp_path, "specs/change/spec.md", "## 规格变化\n- 新增 DEMO-1：x\n  - 例：随便写\n")
+
+    assert scan(tmp_path) == []
+
+
+def test_ignore_paths_and_rules(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "vendor/lib/a.py", "# DEMO-9\n")
+
+    assert [f.rule for f in scan(tmp_path)] == ["dangling-ref"]
+    assert scan(tmp_path, ignores=["vendor"]) == []
+    assert scan(tmp_path, ignored_rules=["dangling-ref"]) == []
+
+
+def test_ignore_file_is_shared_with_doc_guard(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "vendor/lib/a.py", "# DEMO-9\n")
+    write(tmp_path, ".dcuignore", "vendor\n")
+
+    assert scan(tmp_path) == []
+
+
+def test_list_rules_and_version(capsys):
+    assert main(["--list-rules"]) == 0
+    assert "dangling-ref" in capsys.readouterr().out
+    assert main(["--version"]) == 0
+    assert "spec_check" in capsys.readouterr().out
+
+
+def test_ignore_pattern_separators(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "vendor/lib/a.py", "# DEMO-9\n")
+
+    assert scan(tmp_path, ignores=["vendor\\lib"]) == []
+
+
+def test_explicit_ignore_file_must_exist(tmp_path, capsys):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
+
+    assert main(["--root", str(tmp_path), "--ignore-file", str(tmp_path / "missing.txt")]) == 2
+    assert "不存在" in capsys.readouterr().err
+
+
+def test_vendored_guard_examples_are_not_references(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "scripts/spec_check.py", '# example: - DEMO-9：x and DEMO:AC-001-1\n')
+    write(tmp_path, "src/app.py", "# DEMO-8\n")
+
+    assert [f.path for f in scan(tmp_path)] == ["src/app.py"]
+
+
+def test_legacy_reference_must_exist(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- AC-001-1：old\n")
+    write(tmp_path, "tests/test_a.py", "# DEMO:AC-001-1 and DEMO:AC-009-9\n")
+
+    assert [(f.rule, f.message) for f in scan(tmp_path)] == [
+        ("dangling-ref", "引用的编号不存在：DEMO:AC-009-9"),
+    ]

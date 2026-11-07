@@ -178,3 +178,92 @@ def test_ledger_dir_and_old_design_phrases_flagged(tmp_path: Path) -> None:
     }
     assert any(finding.path == "ledger" for finding in findings)
     assert sum(finding.rule == "bookkeeping-phrase" for finding in findings) == 3
+
+def test_ignore_glob_skips_paths(tmp_path: Path) -> None:
+    write(tmp_path, "docs/legacy/notes.md", "已取代的内容\n")
+    write(tmp_path, "vendor/lib/README.md", "decision log\n")
+    write(tmp_path, "docs/current.md", "现行说明\n")
+
+    assert [finding.path for finding in scan(tmp_path)] == [
+        "docs/legacy/notes.md",
+        "vendor/lib/README.md",
+    ]
+    assert [finding.path for finding in scan(tmp_path, ignores=["docs/legacy"])] == [
+        "vendor/lib/README.md",
+    ]
+    assert [finding.path for finding in scan(tmp_path, ignores=["vendor"])] == [
+        "docs/legacy/notes.md",
+    ]
+    assert scan(tmp_path, ignores=["docs/legacy", "vendor/lib"]) == []
+
+
+def test_ignore_file_and_disable(tmp_path: Path) -> None:
+    write(tmp_path, "docs/legacy/notes.md", "已取代的内容\n")
+    write(tmp_path, ".dcuignore", "# comment\n\ndocs/legacy\n")
+
+    assert scan(tmp_path) == []
+    assert [f.path for f in scan(tmp_path, use_ignore_file=False)] == ["docs/legacy/notes.md"]
+    assert [f.path for f in scan(tmp_path, ignore_file=tmp_path / "absent.txt")] == [
+        "docs/legacy/notes.md",
+    ]
+
+
+def test_ignore_by_bare_filename(tmp_path: Path) -> None:
+    write(tmp_path, "docs/CHANGELOG.md", "decision log\n")
+    assert scan(tmp_path) != []
+    assert scan(tmp_path, ignores=["CHANGELOG.md"]) == []
+
+
+def test_ignore_rule(tmp_path: Path) -> None:
+    write(tmp_path, "docs/a.md", "见 D-036\n")
+    write(tmp_path, "docs/decisions/x.md", "x\n")
+
+    assert [f.rule for f in scan(tmp_path)] == ["decision-id", "forbidden-path"]
+    assert [f.rule for f in scan(tmp_path, ignored_rules=["decision-id"])] == ["forbidden-path"]
+    assert scan(tmp_path, ignored_rules=["decision-id", "forbidden-path"]) == []
+
+
+def test_inline_suppression(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        "docs/a.md",
+        "沿用旧字段（已取代 X）  <!-- doc-guard:ignore -->\n"
+        "第二行 已取代\n"
+        "<!-- doc-guard:off -->\n"
+        "第三行 已取代\n"
+        "<!-- doc-guard:on -->\n"
+        "第四行 已取代\n",
+    )
+    assert [(finding.rule, finding.line) for finding in scan(tmp_path)] == [
+        ("bookkeeping-phrase", 2),
+        ("bookkeeping-phrase", 6),
+    ]
+
+
+def test_code_fences_are_not_document_claims(tmp_path: Path) -> None:
+    write(tmp_path, "docs/a.md", "示例：\n```\ngit log --format=%H e8358c6\nD-036\n```\n")
+    assert scan(tmp_path) == []
+
+
+def test_list_rules_and_version(capsys) -> None:
+    assert main(["--list-rules"]) == 0
+    assert "forbidden-path" in capsys.readouterr().out
+    assert main(["--version"]) == 0
+    assert "doc_guard" in capsys.readouterr().out
+
+
+def test_ignore_pattern_separators_and_case(tmp_path: Path) -> None:
+    write(tmp_path, "docs/Vendor/notes.md", "decision log\n")
+
+    assert scan(tmp_path, ignores=["docs\\Vendor"]) == []
+    if os.name == "nt":
+        assert scan(tmp_path, ignores=["docs/vendor"]) == []
+    else:
+        assert scan(tmp_path, ignores=["docs/vendor"]) != []
+
+
+def test_explicit_ignore_file_must_exist(tmp_path: Path, capsys) -> None:
+    write(tmp_path, "docs/a.md", "clean\n")
+
+    assert main(["--root", str(tmp_path), "--ignore-file", str(tmp_path / "missing.txt")]) == 2
+    assert "不存在" in capsys.readouterr().err

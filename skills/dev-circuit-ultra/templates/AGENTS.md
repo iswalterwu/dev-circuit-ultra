@@ -21,6 +21,7 @@
 - <测试、类型检查、构建命令>
 - 文档防回流：`python scripts/doc_guard.py`
 - 要求编号检查：`python scripts/spec_check.py`（加 `--report` 可查看未被测试引用的要求和演示要求清单）
+- 误杀时用白名单：`--ignore <GLOB>`、`--ignore-rule <RULE>`（规则名见 `--list-rules`），或在项目根写 `.dcuignore`
 - 新克隆后执行一次：`git config core.hooksPath .githooks`
 
 ## 4. 代码地图

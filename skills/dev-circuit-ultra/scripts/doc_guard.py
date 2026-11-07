@@ -1,21 +1,40 @@
-"""doc_guard v0.1.0
+"""doc_guard v0.2.0
 
 用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径和断链。
-用法：python doc_guard.py [--root DIR] [--json]
+用法：python doc_guard.py [--root DIR] [--json] [--ignore GLOB]... [--ignore-rule RULE]...
 退出码：0 无问题；1 有问题；2 根目录不存在或参数错误。
 本文件来自 dev-circuit-ultra 仓库，项目里不要修改，升级时整体覆盖。
+
+忽略白名单（误杀时用，不是默认关闭检查）：
+  --ignore GLOB           按相对路径忽略，可重复；如 --ignore 'vendor/**'、--ignore CHANGELOG.md
+  .dcuignore              项目根目录的忽略清单，一行一个 GLOB，# 开头为注释（与 .gitignore 类似）
+  --ignore-rule RULE      忽略某条规则，可重复；--list-rules 查看规则名
+  行内抑制                行内写 doc-guard:ignore 只忽略该行；doc-guard:off / doc-guard:on 忽略一段
+
+代码围栏内的内容不做检查：示例命令和哈希不是文档主张。
 """
 
 import argparse
 import fnmatch
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
+IGNORE_FILE = ".dcuignore"
+
+RULES = (
+    "forbidden-path",
+    "bookkeeping-phrase",
+    "decision-id",
+    "long-hash",
+    "short-hash",
+    "broken-link",
+)
 
 BOOKKEEPING_PHRASES = (
     "轮次记录",
@@ -55,6 +74,10 @@ SHORT_HASH = re.compile(r"(?<![#\w-])[0-9a-f]{7,12}(?![\w-])")
 INLINE_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
+SUPPRESS_LINE = re.compile(r"doc-guard:\s*ignore", re.IGNORECASE)
+SUPPRESS_OFF = re.compile(r"doc-guard:\s*off", re.IGNORECASE)
+SUPPRESS_ON = re.compile(r"doc-guard:\s*on", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -62,6 +85,49 @@ class Finding:
     path: str
     line: int
     message: str
+
+
+def _fold(value: str) -> str:
+    """Windows paths are case-insensitive, POSIX paths are not."""
+    return value.casefold() if os.name == "nt" else value
+
+
+def path_is_ignored(relative: str, patterns) -> bool:
+    """Match a posix relative path against ignore globs.
+
+    Patterns accept `/` or `\\` as the separator. A pattern with a separator
+    matches from the project root; a pattern without one matches any single
+    path segment, so "CHANGELOG.md" also ignores "docs/CHANGELOG.md". Case is
+    ignored on Windows and significant elsewhere, matching the filesystem.
+    There is no `!` negation: narrow the pattern instead.
+    """
+    candidate = _fold(relative.replace("\\", "/").strip("/"))
+    for raw in patterns:
+        pattern = _fold(str(raw).replace("\\", "/").strip().lstrip("./"))
+        if not pattern:
+            continue
+        if "/" in pattern:
+            if fnmatch.fnmatchcase(candidate, pattern):
+                return True
+            prefix = pattern.rstrip("/")
+            if candidate == prefix or candidate.startswith(prefix + "/"):
+                return True
+        else:
+            if fnmatch.fnmatchcase(candidate, pattern):
+                return True
+            if any(fnmatch.fnmatchcase(part, pattern) for part in candidate.split("/")):
+                return True
+    return False
+
+
+def load_ignore_file(path: Path) -> list[str]:
+    """Read one glob per line; blank lines and # comments are skipped."""
+    patterns: list[str] = []
+    for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        entry = line.strip()
+        if entry and not entry.startswith("#"):
+            patterns.append(entry)
+    return patterns
 
 
 def _is_forbidden_dir(relative: Path) -> bool:
@@ -89,18 +155,22 @@ def _is_scanned_doc(relative: Path) -> bool:
     ) or (relative.name == "README.md" and len(parts) in {2, 3})
 
 
-def _walk(root: Path, directory: Path, findings: list[Finding]) -> list[Path]:
+def _walk(root: Path, directory: Path, findings: list[Finding], patterns) -> list[Path]:
     documents: list[Path] = []
     for path in sorted(directory.iterdir()):
         relative = path.relative_to(root)
         if path.is_dir():
             if path.name in SKIPPED_DIRS:
                 continue
+            if path_is_ignored(relative.as_posix(), patterns):
+                continue
             if _is_forbidden_dir(relative):
                 findings.append(Finding("forbidden-path", relative.as_posix(), 0, "禁止的目录"))
                 continue
-            documents.extend(_walk(root, path, findings))
+            documents.extend(_walk(root, path, findings, patterns))
         elif path.is_file():
+            if path_is_ignored(relative.as_posix(), patterns):
+                continue
             if _is_forbidden_file(relative):
                 findings.append(Finding("forbidden-path", relative.as_posix(), 0, "禁止的文件"))
             if _is_scanned_doc(relative):
@@ -132,7 +202,27 @@ def _scan_document(document: Path, root: Path) -> list[Finding]:
     relative = document.relative_to(root).as_posix()
     fence_char = ""
     fence_length = 0
+    suppressed = False
     for number, line in enumerate(document.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        fence = FENCE.match(line)
+        if fence:
+            marker = fence.group(1)
+            if not fence_char:
+                fence_char, fence_length = marker[0], len(marker)
+            elif (marker[0] == fence_char and len(marker) >= fence_length
+                  and not line[fence.end():].strip()):
+                fence_char, fence_length = "", 0
+            continue
+        if fence_char:
+            continue
+
+        if SUPPRESS_OFF.search(line):
+            suppressed = True
+        if SUPPRESS_ON.search(line):
+            suppressed = False
+        if suppressed or SUPPRESS_LINE.search(line):
+            continue
+
         for match in DECISION_ID.finditer(line):
             findings.append(Finding("decision-id", relative, number, f"决策编号：{match.group()}"))
         for match in LONG_HASH.finditer(line):
@@ -145,27 +235,33 @@ def _scan_document(document: Path, root: Path) -> list[Finding]:
             if phrase in line:
                 findings.append(Finding("bookkeeping-phrase", relative, number, f"过程记录短语：{phrase}"))
 
-        fence = FENCE.match(line)
-        if fence:
-            marker = fence.group(1)
-            if not fence_char:
-                fence_char, fence_length = marker[0], len(marker)
-            elif (marker[0] == fence_char and len(marker) >= fence_length
-                  and not line[fence.end():].strip()):
-                fence_char, fence_length = "", 0
-            continue
-        if not fence_char:
-            findings.extend(_scan_links(line, document, root, number))
+        findings.extend(_scan_links(line, document, root, number))
     return findings
 
 
-def scan(root: Path) -> list[Finding]:
-    """Report forbidden paths and content under a project root."""
+def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
+         use_ignore_file: bool = True) -> list[Finding]:
+    """Report forbidden paths and content under a project root.
+
+    `ignores` are path globs; `ignored_rules` are rule names from RULES. When
+    `use_ignore_file` is true and a `.dcuignore` exists under `root` (or at
+    `ignore_file`), its patterns are added.
+    """
     root = Path(root)
+    patterns = list(ignores)
+    if use_ignore_file:
+        candidate = Path(ignore_file) if ignore_file else root / IGNORE_FILE
+        if candidate.is_file():
+            patterns.extend(load_ignore_file(candidate))
+
     findings: list[Finding] = []
-    documents = _walk(root, root, findings)
+    documents = _walk(root, root, findings, patterns)
     for document in documents:
         findings.extend(_scan_document(document, root))
+
+    ignored = set(ignored_rules)
+    if ignored:
+        findings = [finding for finding in findings if finding.rule not in ignored]
     return sorted(findings, key=lambda item: (item.path, item.line, item.rule, item.message))
 
 
@@ -174,15 +270,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check project documentation for forbidden content")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: current directory)")
     parser.add_argument("--json", action="store_true", help="print findings as JSON")
+    parser.add_argument("--ignore", action="append", default=[], metavar="GLOB",
+                        help="ignore a relative path glob (repeatable)")
+    parser.add_argument("--ignore-rule", action="append", default=[], choices=RULES,
+                        help="ignore one rule (repeatable)")
+    parser.add_argument("--ignore-file", type=Path, default=None,
+                        help=f"read extra globs from this file (default: <root>/{IGNORE_FILE})")
+    parser.add_argument("--no-ignore-file", action="store_true",
+                        help=f"do not read {IGNORE_FILE}")
+    parser.add_argument("--list-rules", action="store_true", help="print rule names and exit")
+    parser.add_argument("--version", action="version", version=f"doc_guard {VERSION}")
     try:
         args = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code)
 
+    if args.list_rules:
+        for rule in RULES:
+            print(rule)
+        return 0
     if not args.root.is_dir():
         return 2
+    if args.ignore_file is not None and not args.ignore_file.is_file():
+        print(f"--ignore-file 指向的文件不存在：{args.ignore_file}", file=sys.stderr)
+        return 2
 
-    findings = scan(args.root)
+    findings = scan(args.root, args.ignore, args.ignore_rule, args.ignore_file,
+                    not args.no_ignore_file)
     if args.json:
         print(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False))
     else:
