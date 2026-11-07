@@ -297,6 +297,24 @@ def evidence_text(records: dict[str, dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def stale_skill_copies(skill: Path, targets: list[Path]) -> list[str]:
+    """Installed copies of the skill whose rules differ from the one under test.
+
+    Subagents can read any file, and a reviewer told to "read reviewer.md"
+    without a path may find an older installed copy and review by old rules.
+    """
+    def text(path: Path) -> bytes:
+        return path.read_bytes().replace(b"\r\n", b"\n") if path.is_file() else b""
+
+    stale = []
+    for target in targets:
+        installed = target / skill.name
+        if installed.is_dir() and any(text(installed / name) != text(skill / name)
+                                      for name in ("SKILL.md", "reviewer.md")):
+            stale.append(str(installed))
+    return stale
+
+
 def rubric_version(bench_open: Path) -> str:
     """Short hash of the rubric and judge brief, so pooled scores can say if they mix versions."""
     digest = hashlib.sha256()

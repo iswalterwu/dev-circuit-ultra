@@ -29,6 +29,9 @@
   - rubric 的"收尾"不再按是否提交计分（提交数由 harness 记录）；同一个问题只在最相关的维度扣一次。
   - 中立起点：OpenSpec 侧起点就豁免 `openspec/changes/archive`，初始化不再需要 `--no-verify`；两侧的 `.bench/` 写进 `.git/info/exclude`，会话 trace 不会被提交。
   - 没有 pytest 汇总行时，测试摘要仍是字符串（原来是 list，汇总会崩）。
+  - 开跑前检查本机装的技能是否与被测版本不同（子 agent 可能读到旧规则），记进 `runs.json`，汇总里提示。
+  - 重评按轮次和重评次数一起交替 A/B，每轮只评 1 次也能位置平衡。
+  - `summarize.py`、`probe.py` 自己展开通配符：PowerShell 和 cmd 不替原生命令展开。
 
 ## 0.4.0
 

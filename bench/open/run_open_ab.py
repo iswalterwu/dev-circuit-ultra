@@ -62,9 +62,13 @@ from _harness import (  # noqa: E402
     run_process,
     setup_pair,
     stage_judge,
+    stale_skill_copies,
     without_harness,
 )
 from probe import run_probes  # noqa: E402
+
+sys.path.insert(0, str(BENCH.parent / "tools"))
+from devcircuit.sync import default_targets  # noqa: E402
 
 SKILLS = BENCH.parent / "skills" / "dev-circuit-ultra"
 BENCH_OPEN = BENCH / "open"
@@ -272,7 +276,10 @@ def judge_round(run_dir: Path, finals: dict[str, Path], records: dict[str, dict]
 
 def rejudge(out: Path, repeats: int, jobs: int, evidence: bool, label: str,
             pi: str, model: str, provider: str, thinking: str) -> int:
-    """Judge saved runs again; even repeats put dev in A, odd repeats put it in B."""
+    """Judge saved runs again, alternating dev between A and B by run and by repeat.
+
+    Alternating by run too keeps even a single repeat per run position-balanced.
+    """
     payload = json.loads((out / "runs.json").read_text(encoding="utf-8"))
     plans = []
     for run in payload.get("runs") or []:
@@ -284,7 +291,7 @@ def rejudge(out: Path, repeats: int, jobs: int, evidence: bool, label: str,
             return 2
         records = {side: run[side] for side in ("dev", "openspec")}
         for repeat in range(repeats):
-            mapping = ({"A": "dev", "B": "openspec"} if repeat % 2 == 0
+            mapping = ({"A": "dev", "B": "openspec"} if (run["index"] + repeat) % 2 == 0
                        else {"A": "openspec", "B": "dev"})
             tag = f"rejudge-{label}-{repeat + 1}"
             plans.append((run_dir, finals, records, mapping, repeat, tag))
@@ -402,6 +409,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"找不到 pi：{pi}", file=sys.stderr)
         return 2
 
+    stale = stale_skill_copies(SKILLS, default_targets())
+    if stale:
+        print(f"注意：本机装的技能和被测版本不同，子 agent 可能读到旧规则：{'；'.join(stale)}。"
+              "在仓库根设 PYTHONPATH=tools 后运行 `python -m devcircuit.cli sync`，从这个 checkout 同步。",
+              file=sys.stderr, flush=True)
+
     repos = setup_pair(root, Path(args.fixture), BENCH_OPEN,
                        openspec_cmd=args.openspec_cmd, reviewer=args.reviewer,
                        overwrite=args.overwrite)
@@ -463,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
             "judge_thinking": judge_thinking if args.judge else None,
             "judges": args.judges if args.judge else 0,
             "seed": args.seed,
+            "stale_skill_copies": stale,
             "runs": runs,
         })
         print(f"  wrote {out / 'runs.json'}", flush=True)

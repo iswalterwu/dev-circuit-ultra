@@ -12,6 +12,7 @@ judges and any re-judges), with and without the closeout dimension.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import re
 import statistics
@@ -70,7 +71,8 @@ def load(directories: list[Path]) -> list[dict]:
         payload = json.loads((directory / "runs.json").read_text(encoding="utf-8"))
         for run in payload.get("runs") or []:
             run["_source"] = str(directory)
-            run["_meta"] = {key: payload.get(key) for key in ("model", "thinking", "judge_model", "seed")}
+            run["_meta"] = {key: payload.get(key) for key in ("model", "thinking", "judge_model", "seed",
+                                                              "stale_skill_copies")}
             run_dir = directory / f"run-{run['index'] + 1:02d}"
             run["_rejudges"] = [json.loads(path.read_text(encoding="utf-8"))
                                 for path in sorted(run_dir.glob("rejudge-*.json"))]
@@ -124,6 +126,9 @@ def caveats(runs: list[dict]) -> list[str]:
     if len(versions) > 1:
         notes.append(f"这些评审用了 {len(versions)} 个版本的 rubric 与评审说明（未记录版本的算一个），"
                      "总分不完全可比；看各维度和探针。")
+    stale = sorted({path for run in runs for path in (run.get("_meta") or {}).get("stale_skill_copies") or []})
+    if stale:
+        notes.append(f"跑的时候本机装着和被测版本不同的技能（{'；'.join(stale)}），子 agent 可能读到旧规则。")
     single = [run for run in runs if len(judgments(run)) == 1]
     if single:
         notes.append(f"{len(single)} 轮只有 1 次评审：单次评审分辨不了 ±3 分，只作定性参考。")
@@ -285,7 +290,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None, help="同时把 summary.md 写到哪里")
     args = parser.parse_args(argv)
 
-    directories = [Path(item) for item in args.directories]
+    directories = []
+    for item in args.directories:
+        # PowerShell and cmd hand the pattern over unexpanded; matches without runs.json are skipped.
+        matches = sorted(glob.glob(item)) if not Path(item).exists() and any(c in item for c in "*?[") else []
+        directories += [Path(match) for match in matches if (Path(match) / "runs.json").is_file()] or [Path(item)]
     missing = [str(item) for item in directories if not (item / "runs.json").is_file()]
     if missing:
         print(f"找不到 runs.json：{', '.join(missing)}", file=sys.stderr)

@@ -19,6 +19,7 @@ command itself fails) is not applicable and is counted apart from failures.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -171,7 +172,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, OSError):
         pass
-    trees = [Path(item) for item in (sys.argv[1:] if argv is None else argv)]
+    trees = []
+    for item in (sys.argv[1:] if argv is None else argv):
+        # PowerShell and cmd hand the pattern over unexpanded; matches without records.py are skipped.
+        matches = sorted(glob.glob(item)) if not Path(item).exists() and any(c in item for c in "*?[") else []
+        trees += [Path(match) for match in matches if (Path(match) / "records.py").is_file()] or [Path(item)]
     missing = [str(tree) for tree in trees if not (tree / "records.py").is_file()]
     if not trees or missing:
         print(f"用法：python bench/probe.py <含 records.py 的目录> ...；找不到：{', '.join(missing) or '（没给目录）'}",

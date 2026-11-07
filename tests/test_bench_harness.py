@@ -159,7 +159,7 @@ def write_stub(path: Path, body: str) -> Path:
     return shim
 
 
-def run_runner(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
+def run_runner(tmp_path: Path, *extra: str, env: dict | None = None) -> subprocess.CompletedProcess:
     stub_pi = write_stub(tmp_path / "stub-pi.py", STUB_PI)
     stub_openspec = write_stub(tmp_path / "stub-openspec.py", STUB_OPENSPEC)
     return subprocess.run(
@@ -171,6 +171,7 @@ def run_runner(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess:
          "--reviewer", "no-such-reviewer",
          *extra],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+        env={**os.environ, **env} if env else None,
     )
 
 
@@ -330,6 +331,15 @@ def test_summarizer_pools_runs(tmp_path: Path) -> None:
     assert json.loads(pooled.with_suffix(".json").read_text(encoding="utf-8"))["runs"] == 2
     assert not (tmp_path / "summary.json").exists()
 
+    # Windows shells pass a glob through unexpanded; the summarizer expands it itself.
+    (tmp_path / "out-notes.log").write_text("not a result directory\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SUMMARIZER), str(tmp_path / "out*"), "--out", str(pooled)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "轮数：2" in result.stdout
+
 
 def test_dry_run_touches_nothing(tmp_path: Path) -> None:
     result = run_runner(tmp_path, "--dry-run", "--runs", "3")
@@ -359,6 +369,29 @@ def test_missing_fixture_is_a_usage_error(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "fixture" in result.stderr
+
+
+def test_warns_about_an_installed_skill_that_differs(tmp_path: Path) -> None:
+    """A subagent can wander into an older installed copy; the run has to say so."""
+    home = tmp_path / "home"
+    stale = home / ".agents" / "skills" / "dev-circuit-ultra"
+    stale.mkdir(parents=True)
+    (stale / "reviewer.md").write_text("# old rules\n", encoding="utf-8")
+    current = home / ".claude" / "skills" / "dev-circuit-ultra"
+    shutil.copytree(REPO / "skills" / "dev-circuit-ultra", current)
+
+    result = run_runner(tmp_path, "--runs", "1", "--no-judge",
+                        env={"HOME": str(home), "USERPROFILE": str(home), "DSH_HOME": str(home / ".dsh")})
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert str(stale) in result.stderr and str(current) not in result.stderr
+    payload = json.loads((tmp_path / "out" / "runs.json").read_text(encoding="utf-8"))
+    assert payload["stale_skill_copies"] == [str(stale)]
+    summary = subprocess.run(
+        [sys.executable, str(SUMMARIZER), str(tmp_path / "out")],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    assert "子 agent 可能读到旧规则" in summary.stdout
 
 
 def test_zero_judges_is_a_usage_error(tmp_path: Path) -> None:
@@ -430,6 +463,11 @@ def test_probe_finds_the_added_command(tmp_path: Path) -> None:
     clean = run_probes(tree)
     assert clean["command"] == "summary"
     assert (clean["passed"], clean["applicable"]) == (9, 9), clean["results"]
+
+    listing = subprocess.run([sys.executable, str(REPO / "bench" / "probe.py"), str(tmp_path / "cle*")],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    assert listing.returncode == 0, listing.stdout + listing.stderr
+    assert "**9/9**" in listing.stdout
 
 
 def test_pytest_summary_is_always_text() -> None:
