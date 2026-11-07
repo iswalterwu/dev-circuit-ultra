@@ -248,6 +248,16 @@ def test_summarizer_pools_runs(tmp_path: Path) -> None:
     assert summary["cost"]["sessions"] == pytest.approx(0.10)
     assert summary["cost"]["judge"] == pytest.approx(0.04)
 
+    # A pooled summary written elsewhere gets its own JSON next to it.
+    pooled = tmp_path / "pooled.md"
+    result = subprocess.run(
+        [sys.executable, str(SUMMARIZER), str(tmp_path / "out"), "--out", str(pooled)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(pooled.with_suffix(".json").read_text(encoding="utf-8"))["runs"] == 2
+    assert not (tmp_path / "summary.json").exists()
+
 
 def test_dry_run_touches_nothing(tmp_path: Path) -> None:
     result = run_runner(tmp_path, "--dry-run", "--runs", "3")

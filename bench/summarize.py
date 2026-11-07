@@ -237,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     destination = Path(args.out) if args.out else directories[0] / "summary.md"
     destination.write_text(text, encoding="utf-8")
-    (destination.parent / "summary.json").write_text(
+    destination.with_suffix(".json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"写到 {destination}")
     return 0
