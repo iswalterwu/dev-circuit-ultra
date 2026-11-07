@@ -9,8 +9,18 @@ slice count, no hidden acceptance suite and no required command shape.
     python bench/open/run_open_ab.py --no-judge          # metrics only
 
 Every run is recorded under --out (default: bench/out/open-<timestamp>/):
-`run-01/dev.json`, `run-01/openspec.json`, `run-01/judge/` and an aggregate
-`runs.json`. Feed the directory to `bench/summarize.py` for the median table.
+`run-01/dev.json`, `run-01/openspec.json`, the session traces
+`run-01/<side>-sessions/`, the final trees `run-01/final/<side>/`, the judge
+`run-01/judge*` and an aggregate `runs.json`. Feed the directory to
+`bench/summarize.py` for the median table.
+
+The judge gets EVIDENCE.md (commits, git status, pytest) because its copy has
+no .git, and it runs outside any repository so git cannot leak the bench.
+Re-judge saved results to measure the judge itself:
+
+    python bench/open/run_open_ab.py --rejudge bench/out/open-... --repeats 4
+
+Repeats alternate which side is A, so position bias shows up in the spread.
 """
 
 from __future__ import annotations
@@ -23,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +51,7 @@ from _harness import (  # noqa: E402
     pi_command,
     pytest_summary,
     read_usage,
+    remove_tree,
     reset,
     run_process,
     setup_pair,
@@ -108,6 +120,10 @@ def run_one(label: str, repo: Path, workflow: str, skills: list[Path], prompt: s
 
     (run_dir / f"{label}.stdout.txt").write_text(stdout, encoding="utf-8")
     (run_dir / f"{label}.stderr.txt").write_text(stderr, encoding="utf-8")
+    # The next reset runs `git clean -fdx`, which would take the trace with it.
+    if session_dir.exists():
+        remove_tree(run_dir / f"{label}-sessions")
+        shutil.copytree(session_dir, run_dir / f"{label}-sessions")
 
     usage = read_usage(session_dir)
     state = changed(repo, base)
@@ -155,15 +171,30 @@ def run_one(label: str, repo: Path, workflow: str, skills: list[Path], prompt: s
         },
     }
     write_json(run_dir / f"{label}.json", record)
+    copy_eval_tree(repo, run_dir / "final" / label)
     return record
 
 
-def judge_run(run_dir: Path, copies: dict[str, Path], mapping: dict[str, str],
-              pi: str, model: str, provider: str, thinking: str, seed: int) -> dict:
-    """Blind judge: the prompt never says which side is which."""
-    stage_judge(run_dir / "judge", copies, BENCH_OPEN)
+def judge_run(run_dir: Path, finals: dict[str, Path], records: dict[str, dict],
+              mapping: dict[str, str], pi: str, model: str, provider: str, thinking: str,
+              seed: int, evidence: bool = True, tag: str = "judge") -> dict:
+    """Blind judge: the prompt never says which side is which.
+
+    Staged in a fresh temp directory with a git ceiling, so `git` inside A/ or
+    B/ cannot walk up into the bench checkout and reveal what it is.
+    """
+    staging = Path(tempfile.mkdtemp(prefix="dcu-judge-")) / "judge"
+    stage_judge(
+        staging,
+        {label: finals[side] for label, side in mapping.items()},
+        BENCH_OPEN,
+        evidence={label: records[side] for label, side in mapping.items()} if evidence else None,
+    )
+    # The judge runs in the staging directory, so a relative path would land there.
+    sessions = (run_dir / f"{tag}-sessions").resolve()
+    remove_tree(sessions)
     result = run_process(
-        run_dir / "judge",
+        staging,
         pi, "-p",
         "--provider", provider,
         "--model", model,
@@ -172,18 +203,26 @@ def judge_run(run_dir: Path, copies: dict[str, Path], mapping: dict[str, str],
         "--no-mcp",
         "--no-skills",
         "--no-prompt-templates",
-        "--session-dir", str(run_dir / "judge-sessions"),
+        "--session-dir", str(sessions),
         timeout=3600,
         stdin=judge_prompt(BENCH_OPEN),
+        extra_env={"GIT_CEILING_DIRECTORIES": str(staging.parent)},
     )
+    remove_tree(run_dir / tag)
+    shutil.copytree(staging, run_dir / tag, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    remove_tree(staging.parent)
+
     text = result["stdout"] + "\n" + result["stderr"]
-    (run_dir / "judge.log").write_text(result["stdout"] + "\n--- stderr ---\n" + result["stderr"],
-                                       encoding="utf-8")
-    usage = read_usage(run_dir / "judge-sessions")
+    (run_dir / f"{tag}.log").write_text(result["stdout"] + "\n--- stderr ---\n" + result["stderr"],
+                                        encoding="utf-8")
+    usage = read_usage(sessions)
     scores = parse_scores(result["stdout"])
     record = {
+        "tag": tag,
         "seed": seed,
         "mapping": mapping,
+        "evidence": evidence,
+        "model": model,
         "exit": result["exit"],
         "seconds": result["seconds"],
         "usage": usage,
@@ -195,8 +234,42 @@ def judge_run(run_dir: Path, copies: dict[str, Path], mapping: dict[str, str],
         record["uncertainty"] = scores.get("uncertainty", "")
     else:
         record["raw_tail"] = text.strip().splitlines()[-20:]
-    write_json(run_dir / "judge.json", record)
+    write_json(run_dir / f"{tag}.json", record)
     return record
+
+
+def rejudge(out: Path, repeats: int, jobs: int, evidence: bool, label: str,
+            pi: str, model: str, provider: str, thinking: str) -> int:
+    """Judge saved runs again; even repeats put dev in A, odd repeats put it in B."""
+    payload = json.loads((out / "runs.json").read_text(encoding="utf-8"))
+    plans = []
+    for run in payload.get("runs") or []:
+        run_dir = out / f"run-{run['index'] + 1:02d}"
+        finals = {side: run_dir / "final" / side for side in ("dev", "openspec")}
+        missing = [str(path) for path in finals.values() if not path.is_dir()]
+        if missing:
+            print(f"缺少最终代码树，无法重评：{', '.join(missing)}", file=sys.stderr)
+            return 2
+        records = {side: run[side] for side in ("dev", "openspec")}
+        for repeat in range(repeats):
+            mapping = ({"A": "dev", "B": "openspec"} if repeat % 2 == 0
+                       else {"A": "openspec", "B": "dev"})
+            tag = f"rejudge-{label}-{repeat + 1}"
+            plans.append((run_dir, finals, records, mapping, repeat, tag))
+
+    def one(plan):
+        run_dir, finals, records, mapping, repeat, tag = plan
+        record = judge_run(run_dir, finals, records, mapping, pi, model, provider, thinking,
+                           seed=repeat, evidence=evidence, tag=tag)
+        totals = ({side: card["total"] for side, card in record["result"].items()}
+                  if record["parsed"] else "无法解析")
+        print(f"  {run_dir.name} {tag} A={mapping['A']} evidence={evidence}: {totals}", flush=True)
+        return record
+
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        list(pool.map(one, plans))
+    print(f"\n重评 {len(plans)} 次；汇总：python bench/summarize.py {out}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -227,6 +300,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--overwrite", action="store_true", help="--root 非空时重新生成")
     parser.add_argument("--keep", action="store_true", help="保留 --root（默认临时目录会删除）")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不创建任何东西")
+    parser.add_argument("--evidence", dest="evidence", action="store_true", default=True,
+                        help="给评委 EVIDENCE.md（提交、git status、pytest；默认开）")
+    parser.add_argument("--no-evidence", dest="evidence", action="store_false")
+    parser.add_argument("--rejudge", default=None, metavar="OUT",
+                        help="不跑会话，只对已有结果目录重新盲评")
+    parser.add_argument("--repeats", type=int, default=2, help="--rejudge 每轮重评几次（A/B 交替）")
+    parser.add_argument("--jobs", type=int, default=1, help="--rejudge 并行几个评委")
+    parser.add_argument("--label", default=None, help="--rejudge 结果文件的标签")
     args = parser.parse_args(argv)
 
     problem = Path(args.problem).read_text(encoding="utf-8").strip()
@@ -234,10 +315,20 @@ def main(argv: list[str] | None = None) -> int:
     judge_pi = args.judge_pi or pi
     judge_model = args.judge_model or args.model
 
+    if args.rejudge:
+        label = args.label or ("ev" if args.evidence else "noev")
+        return rejudge(Path(args.rejudge).resolve(), args.repeats, args.jobs, args.evidence, label,
+                       judge_pi, judge_model, args.provider, args.thinking)
+
     temporary = args.root is None
-    root = Path(args.root) if args.root else Path(tempfile.mkdtemp(prefix="dcu-ab-"))
+    if args.root:
+        root = Path(args.root)
+    elif args.dry_run:
+        root = Path(tempfile.gettempdir()) / "dcu-ab-<随机>"
+    else:
+        root = Path(tempfile.mkdtemp(prefix="dcu-ab-"))
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = Path(args.out) if args.out else BENCH / "out" / f"open-{stamp}"
+    out = Path(args.out).resolve() if args.out else BENCH / "out" / f"open-{stamp}"
 
     sides = {"dev": (root / "dev-circuit", "dev-circuit-ultra",
                      [SKILLS]),
@@ -250,7 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"runs:   {args.runs}")
         print(f"model:  {args.provider}/{args.model}  thinking={args.thinking}")
         print(f"fixture:{args.fixture}")
-        print(f"judge:  {'on' if args.judge else 'off'}  ({judge_model})")
+        print(f"judge:  {'on' if args.judge else 'off'}  ({judge_model}, "
+              f"evidence {'on' if args.evidence else 'off'})")
         print("")
         print("setup:")
         print(f"  devcircuit init --path {root / 'dev-circuit'} --name records")
@@ -294,11 +386,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"{records[side]['turns']} turns, ${records[side]['cost']}", flush=True)
 
         mapping = anonymize(args.seed + index)
-        copies = {label: repos[side] for label, side in mapping.items()}
+        finals = {side: run_dir / "final" / side for side in records}
         judge_record = None
         if args.judge:
-            judge_record = judge_run(run_dir, copies, mapping, judge_pi, judge_model,
-                                     args.provider, args.thinking, args.seed + index)
+            judge_record = judge_run(run_dir, finals, records, mapping, judge_pi, judge_model,
+                                     args.provider, args.thinking, args.seed + index,
+                                     evidence=args.evidence)
             if judge_record["parsed"]:
                 totals = {side: card["total"] for side, card in judge_record["result"].items()}
                 print(f"  judge: {json.dumps(totals)}", flush=True)
@@ -326,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  wrote {out / 'runs.json'}", flush=True)
 
     if temporary and not args.keep:
-        shutil.rmtree(root, ignore_errors=True)
+        remove_tree(root)
 
     print(f"\n完成 {len(runs)} 轮：{out}")
     print(f"汇总：python bench/summarize.py {out}")

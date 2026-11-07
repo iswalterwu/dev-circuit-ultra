@@ -7,7 +7,10 @@
 - `doc_guard --include GLOB`：把默认范围之外的 `.md` 也纳入扫描；ignore 优先于 include。
 - `spec_check` 的"已合并"提示跟随卡片语言：英文卡不再收到中文提示。
 - demo 增加工具调用层边界：hook 在读取之前拦下账本，绝对路径和相对路径都拦。
-- 开放 A/B 可以脚本化重跑：`bench/open/run_open_ab.py --runs N` 用 `--dry-run` 先看计划，跑完自动做随机 A/B 的盲评；`bench/summarize.py` 把多轮结果汇成中位数与配对差值。`tests/test_bench_harness.py` 用桩 `pi` / `openspec` 覆盖这套流程，不花 token。汇总单列盲评成本（实测约占一轮总成本的四分之一）。
+- 开放 A/B 可以脚本化重跑：`bench/open/run_open_ab.py --runs N` 用 `--dry-run` 先看计划，跑完自动做随机 A/B 的盲评；`bench/summarize.py` 把多轮结果汇成中位数与配对差值。
+  每轮存下两侧会话 trace 与最终代码树；成本含 reviewer 等子 agent；盲评在仓库外进行并附 `EVIDENCE.md`（提交、`git status`、pytest）；
+  `--rejudge` 对已存产物重评（A/B 交替、可关 EVIDENCE），汇总里列出评委信度与盲评成本。
+  `tests/test_bench_harness.py` 用桩 `pi` / `openspec` 覆盖这套流程，不花 token。
 
 ## 0.4.0
 

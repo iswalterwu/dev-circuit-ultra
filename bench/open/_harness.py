@@ -11,6 +11,7 @@ import os
 import random
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -52,6 +53,20 @@ def reset(repo: Path) -> None:
     git(repo, "clean", "-fdx")
 
 
+def remove_tree(path: Path) -> None:
+    """rmtree that also removes read-only files (git objects on Windows)."""
+    def retry(function, target, _info):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+
+    if not Path(path).exists():
+        return
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)
+
+
 def fill(prompt: str, **values: str) -> str:
     for key, value in values.items():
         prompt = prompt.replace("{{" + key + "}}", value)
@@ -80,14 +95,32 @@ def devcircuit(*args: str, python: str | None = None) -> dict:
 
 
 def read_usage(session_dir: Path) -> dict:
+    """Main-session usage plus the subagents it dispatched.
+
+    The subagent extension runs children with --no-session, so their usage only
+    exists in the parent's toolResult details. Top-level token and cost totals
+    include it; `turns` stays the parent's assistant turns.
+    """
     totals = {"input": 0, "output": 0, "cache_read": 0, "reasoning": 0, "cost": 0.0, "turns": 0}
+    children = {"calls": 0, "input": 0, "output": 0, "cache_read": 0, "cost": 0.0, "turns": 0}
     for path in session_dir.rglob("*.jsonl") if session_dir.exists() else []:
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            usage = (record.get("message") or {}).get("usage") or {}
+            message = record.get("message") or {}
+            if message.get("role") == "toolResult" and message.get("toolName") == "subagent":
+                for child in (message.get("details") or {}).get("results") or []:
+                    used = child.get("usage") or {}
+                    children["calls"] += 1
+                    children["input"] += used.get("input", 0)
+                    children["output"] += used.get("output", 0)
+                    children["cache_read"] += used.get("cacheRead", 0)
+                    children["cost"] += used.get("cost", 0) or 0
+                    children["turns"] += used.get("turns", 0)
+                continue
+            usage = message.get("usage") or {}
             if not usage:
                 continue
             totals["input"] += usage.get("input", 0)
@@ -96,11 +129,16 @@ def read_usage(session_dir: Path) -> dict:
             totals["reasoning"] += usage.get("reasoning", 0)
             totals["cost"] += (usage.get("cost") or {}).get("total", 0)
             totals["turns"] += 1
+    for key in ("input", "output", "cache_read", "cost"):
+        totals[key] += children[key]
     totals["cost"] = round(totals["cost"], 6)
+    children["cost"] = round(children["cost"], 6)
+    totals["subagents"] = children
     return totals
 
 
-def run_process(repo: Path, *command: str, timeout: int = 300, stdin: str | None = None) -> dict:
+def run_process(repo: Path, *command: str, timeout: int = 300, stdin: str | None = None,
+                extra_env: dict | None = None) -> dict:
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -111,7 +149,7 @@ def run_process(repo: Path, *command: str, timeout: int = 300, stdin: str | None
             text=True,
             encoding="utf-8",
             timeout=timeout,
-            env={**os.environ, "NO_COLOR": "1", "PYTHONIOENCODING": "utf-8"},
+            env={**os.environ, "NO_COLOR": "1", "PYTHONIOENCODING": "utf-8", **(extra_env or {})},
         )
         return {
             "command": " ".join(command),
@@ -162,7 +200,7 @@ def setup_pair(root: Path, fixture: Path, bench_open: Path,
     if root.exists() and any(root.iterdir()):
         if not overwrite:
             raise SystemExit(f"{root} 不是空目录；加 --overwrite 重新生成两侧仓库。")
-        shutil.rmtree(root)
+        remove_tree(root)
     root.mkdir(parents=True, exist_ok=True)
 
     for name, repo in repos.items():
@@ -214,9 +252,30 @@ def setup_pair(root: Path, fixture: Path, bench_open: Path,
 
 
 def copy_eval_tree(src: Path, dst: Path) -> None:
-    if dst.exists():
-        shutil.rmtree(dst)
+    remove_tree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*EVAL_IGNORES))
+
+
+def evidence_text(records: dict[str, dict]) -> str:
+    """Facts the judge cannot see in a copy without .git, same shape for each side."""
+    lines = [
+        "# EVIDENCE",
+        "",
+        "评审副本去掉了 `.git`。下面是 harness 在原仓库里取到的事实，两边格式相同；",
+        "它是证据，不是结论。harness 自己的文件（`.bench/` 等）已排除。",
+    ]
+    for label in sorted(records):
+        record = records[label]
+        diff = record.get("diff") or {}
+        commits = diff.get("commits") or []
+        status = diff.get("status") or []
+        tests = (record.get("tests") or {}).get("summary") or "（无输出）"
+        lines += ["", f"## {label}", "", f"- 相对起点的提交：{len(commits)} 个"]
+        lines += [f"  - `{commit}`" for commit in commits]
+        lines.append(f"- `git status --porcelain`：{len(status)} 条")
+        lines += [f"  - `{entry}`" for entry in status]
+        lines.append(f"- 会话结束后 `python -m pytest -q`：{tests}")
+    return "\n".join(lines) + "\n"
 
 
 def judge_prompt(bench_open: Path) -> str:
@@ -239,16 +298,18 @@ def judge_prompt(bench_open: Path) -> str:
     return text
 
 
-def stage_judge(destination: Path, copies: dict[str, Path], bench_open: Path) -> None:
+def stage_judge(destination: Path, copies: dict[str, Path], bench_open: Path,
+                evidence: dict[str, dict] | None = None) -> None:
     """Lay out a self-contained judge directory: A/, B/, problem, rubric, judge."""
-    if destination.exists():
-        shutil.rmtree(destination)
+    remove_tree(destination)
     destination.mkdir(parents=True)
     for label, source in copies.items():
         copy_eval_tree(source, destination / label)
     for name in ("problem.md", "rubric.md"):
         shutil.copyfile(bench_open / name, destination / name)
     (destination / "judge.md").write_text(judge_prompt(bench_open), encoding="utf-8")
+    if evidence:
+        (destination / "EVIDENCE.md").write_text(evidence_text(evidence), encoding="utf-8")
 
 
 SCORE_FENCE = re.compile(r"```json\s*")

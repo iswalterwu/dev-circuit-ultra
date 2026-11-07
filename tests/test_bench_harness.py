@@ -20,18 +20,23 @@ SUMMARIZER = REPO / "bench" / "summarize.py"
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git required")
 
 STUB_PI = '''#!@@PY@@
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 
 argv = sys.argv[1:]
 session_dir = Path(argv[argv.index("--session-dir") + 1])
 prompt = sys.stdin.read()
 session_dir.mkdir(parents=True, exist_ok=True)
+judging = "键名固定" in prompt
 
 USAGE = {"input": 1000, "output": 500, "cacheRead": 10000, "cacheWrite": 0,
          "totalTokens": 11500,
          "cost": {"input": 0.001, "output": 0.002, "cacheRead": 0.003,
                   "cacheWrite": 0.0, "total": 0.01}}
+# What the subagent extension stores: the child's usage lives only in details.
+REVIEWER = {"role": "toolResult", "toolName": "subagent", "toolCallId": "c1", "content": [],
+            "details": {"results": [{"agent": "reviewer-fast", "usage": {
+                "input": 300, "output": 200, "cacheRead": 4000, "cost": 0.005, "turns": 3}}]}}
 
 with open(session_dir / "session.jsonl", "w", encoding="utf-8") as log:
     for role, text in (("user", prompt[:40]), ("assistant", "first step"), ("assistant", "second step")):
@@ -39,8 +44,17 @@ with open(session_dir / "session.jsonl", "w", encoding="utf-8") as log:
         if role == "assistant":
             message["usage"] = dict(USAGE)
         print(json.dumps({"type": "message_end", "message": message}, ensure_ascii=False), file=log)
+    if not judging:
+        print(json.dumps({"type": "message", "message": REVIEWER}), file=log)
 
-if "键名固定" in prompt:
+if judging:
+    where = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd="A",
+                           capture_output=True, text=True)
+    (session_dir / "judge-env.json").write_text(json.dumps({
+        "cwd": os.getcwd(),
+        "git_toplevel": where.stdout.strip(),
+        "evidence": Path("EVIDENCE.md").read_text(encoding="utf-8") if Path("EVIDENCE.md").exists() else None,
+    }, ensure_ascii=False), encoding="utf-8")
     print("评审完成。")
     print("```json")
     print(json.dumps({
@@ -116,10 +130,13 @@ def test_two_runs_and_a_blind_judge(tmp_path: Path) -> None:
         for side in ("dev", "openspec"):
             record = run[side]
             assert record["exit"] == 0 and not record["timeout"]
+            # Two parent turns plus one reviewer subagent that only exists in details.
             assert record["turns"] == 2
-            assert record["input"] == 2000 and record["output"] == 1000
-            assert record["cache_read"] == 20000
-            assert record["cost"] == pytest.approx(0.02)
+            assert record["input"] == 2300 and record["output"] == 1200
+            assert record["cache_read"] == 24000
+            assert record["cost"] == pytest.approx(0.025)
+            assert record["subagents"] == {"calls": 1, "input": 300, "output": 200,
+                                           "cache_read": 4000, "cost": 0.005, "turns": 3}
             assert len(record["diff"]["commits"]) == 1
 
         assert run["judge"]["parsed"] is True
@@ -130,10 +147,86 @@ def test_two_runs_and_a_blind_judge(tmp_path: Path) -> None:
         assert run["judge"]["result"]["openspec"]["total"] == (21 if mapping["A"] == "dev" else 26)
         assert run["judge"]["verdict"] == "A 收尾更干净"
 
-    judge_text = (tmp_path / "out" / "run-01" / "judge" / "judge.md").read_text(encoding="utf-8")
+    out = tmp_path / "out"
+    judge_text = (out / "run-01" / "judge" / "judge.md").read_text(encoding="utf-8")
     assert "```json" in judge_text
-    assert (tmp_path / "out" / "run-01" / "judge" / "A").is_dir()
-    assert not (tmp_path / "out" / "run-01" / "judge" / "A" / ".git").exists()
+    assert (out / "run-01" / "judge" / "A").is_dir()
+    assert not (out / "run-01" / "judge" / "A" / ".git").exists()
+
+
+def test_traces_and_final_trees_survive_the_next_reset(tmp_path: Path) -> None:
+    assert run_runner(tmp_path, "--runs", "2").returncode == 0
+
+    for run in ("run-01", "run-02"):
+        for side in ("dev", "openspec"):
+            assert (tmp_path / "out" / run / f"{side}-sessions" / "session.jsonl").is_file()
+            assert (tmp_path / "out" / run / "final" / side / "report.md").is_file()
+            assert not (tmp_path / "out" / run / "final" / side / ".git").exists()
+
+
+def test_judge_sees_evidence_but_not_the_bench_checkout(tmp_path: Path) -> None:
+    assert run_runner(tmp_path, "--runs", "1").returncode == 0
+
+    seen = json.loads((tmp_path / "out" / "run-01" / "judge-sessions" / "judge-env.json")
+                      .read_text(encoding="utf-8"))
+    assert not Path(seen["cwd"]).resolve().is_relative_to(tmp_path.resolve())
+    assert not Path(seen["cwd"]).resolve().is_relative_to(REPO.resolve())
+    assert seen["git_toplevel"] == ""
+    assert "## A" in seen["evidence"] and "## B" in seen["evidence"]
+    assert "相对起点的提交：1 个" in seen["evidence"]
+    assert "`python -m pytest -q`：" in seen["evidence"]
+    # The staged copy is kept with the run for the record.
+    assert (tmp_path / "out" / "run-01" / "judge" / "EVIDENCE.md").is_file()
+
+
+def test_relative_out_keeps_judge_sessions_with_the_run(tmp_path: Path) -> None:
+    """The judge runs in a temp dir; a relative --out must not follow it there."""
+    stub_pi = write_stub(tmp_path / "stub-pi.py", STUB_PI)
+    stub_openspec = write_stub(tmp_path / "stub-openspec.py", STUB_OPENSPEC)
+    common = ["--pi", str(stub_pi), "--openspec-cmd", str(stub_openspec), "--reviewer", "none"]
+    result = subprocess.run(
+        [sys.executable, str(RUNNER), "--root", "repos", "--out", "out", "--runs", "1", *common],
+        cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "out" / "run-01" / "judge-sessions" / "session.jsonl").is_file()
+    assert not (tmp_path / "out" / "run-01" / "judge" / "out").exists()
+    judge = json.loads((tmp_path / "out" / "run-01" / "judge.json").read_text(encoding="utf-8"))
+    assert judge["usage"]["cost"] == pytest.approx(0.02)
+
+    result = subprocess.run(
+        [sys.executable, str(RUNNER), "--rejudge", "out", "--repeats", "1", *common],
+        cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    again = json.loads((tmp_path / "out" / "run-01" / "rejudge-ev-1.json").read_text(encoding="utf-8"))
+    assert again["usage"]["cost"] == pytest.approx(0.02)
+
+
+def test_rejudge_alternates_positions_and_reports_spread(tmp_path: Path) -> None:
+    assert run_runner(tmp_path, "--runs", "1").returncode == 0
+
+    result = run_runner(tmp_path, "--rejudge", str(tmp_path / "out"), "--repeats", "2",
+                        "--jobs", "2", "--no-evidence")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    first = json.loads((tmp_path / "out" / "run-01" / "rejudge-noev-1.json").read_text(encoding="utf-8"))
+    second = json.loads((tmp_path / "out" / "run-01" / "rejudge-noev-2.json").read_text(encoding="utf-8"))
+    assert first["mapping"] == {"A": "dev", "B": "openspec"}
+    assert second["mapping"] == {"A": "openspec", "B": "dev"}
+    assert first["evidence"] is False and second["evidence"] is False
+    assert not (tmp_path / "out" / "run-01" / "rejudge-noev-1" / "EVIDENCE.md").exists()
+    # The stub always prefers A, so the two positions disagree by the full 5 points.
+    assert first["result"]["dev"]["total"] == 26 and second["result"]["dev"]["total"] == 21
+
+    summary = subprocess.run(
+        [sys.executable, str(SUMMARIZER), str(tmp_path / "out")],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+    )
+    assert summary.returncode == 0, summary.stdout + summary.stderr
+    assert "评委信度" in summary.stdout
+    assert "dev 在 A 时差值均值 +5.00" in summary.stdout
+    assert "在 B 时 -5.00" in summary.stdout
 
 
 def test_summarizer_pools_runs(tmp_path: Path) -> None:
@@ -151,8 +244,8 @@ def test_summarizer_pools_runs(tmp_path: Path) -> None:
     assert summary["runs"] == 2
     assert summary["sides"]["turns"]["dev"] == [2, 2]
     assert summary["judge"]["wins"] + summary["judge"]["ties"] + summary["judge"]["losses"] == 2
-    # Two rounds of two sides plus two judge sessions, each 2 x $0.01 in the stub.
-    assert summary["cost"]["sessions"] == pytest.approx(0.08)
+    # Two rounds of two sides ($0.025 each with the reviewer) plus two judges at $0.02.
+    assert summary["cost"]["sessions"] == pytest.approx(0.10)
     assert summary["cost"]["judge"] == pytest.approx(0.04)
 
 
@@ -164,6 +257,18 @@ def test_dry_run_touches_nothing(tmp_path: Path) -> None:
     assert "run 2: openspec -> dev" in result.stdout
     assert not (tmp_path / "repos").exists()
     assert not (tmp_path / "out").exists()
+
+
+def test_dry_run_without_root_creates_no_temp_dir() -> None:
+    import tempfile
+
+    before = set(Path(tempfile.gettempdir()).glob("dcu-ab-*"))
+    result = subprocess.run(
+        [sys.executable, str(RUNNER), "--dry-run", "--pi", sys.executable],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert set(Path(tempfile.gettempdir()).glob("dcu-ab-*")) == before
 
 
 def test_missing_fixture_is_a_usage_error(tmp_path: Path) -> None:
