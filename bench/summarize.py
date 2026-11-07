@@ -131,6 +131,18 @@ def build(runs: list[dict]) -> tuple[str, dict]:
         lines.append("")
         lines.append("这一批没有可用的盲评分数（`--no-judge` 或解析失败），只有运行指标。")
 
+    judge_usage = [run["judge"]["usage"] for run in runs
+                   if (run.get("judge") or {}).get("usage")]
+    if judge_usage:
+        judge_cost = sum(item.get("cost") or 0 for item in judge_usage)
+        session_cost = sum((run.get(side) or {}).get("cost") or 0
+                           for run in runs for side in sides)
+        lines.append("")
+        lines.append(f"盲评成本（$）：{judge_cost:,.4f}（每轮一次，不按侧分摊）；"
+                     f"两侧会话合计 {session_cost:,.4f}；本轮总计 {session_cost + judge_cost:,.4f}。")
+        summary["cost"] = {"sessions": session_cost, "judge": judge_cost,
+                           "total": session_cost + judge_cost}
+
     failures = [run["index"] for run in runs
                 if (run.get("dev") or {}).get("timeout") or (run.get("openspec") or {}).get("timeout")]
     if failures:

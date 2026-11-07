@@ -179,12 +179,14 @@ def judge_run(run_dir: Path, copies: dict[str, Path], mapping: dict[str, str],
     text = result["stdout"] + "\n" + result["stderr"]
     (run_dir / "judge.log").write_text(result["stdout"] + "\n--- stderr ---\n" + result["stderr"],
                                        encoding="utf-8")
+    usage = read_usage(run_dir / "judge-sessions")
     scores = parse_scores(result["stdout"])
     record = {
         "seed": seed,
         "mapping": mapping,
         "exit": result["exit"],
         "seconds": result["seconds"],
+        "usage": usage,
         "parsed": scores is not None,
     }
     if scores:

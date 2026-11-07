@@ -151,6 +151,9 @@ def test_summarizer_pools_runs(tmp_path: Path) -> None:
     assert summary["runs"] == 2
     assert summary["sides"]["turns"]["dev"] == [2, 2]
     assert summary["judge"]["wins"] + summary["judge"]["ties"] + summary["judge"]["losses"] == 2
+    # Two rounds of two sides plus two judge sessions, each 2 x $0.01 in the stub.
+    assert summary["cost"]["sessions"] == pytest.approx(0.08)
+    assert summary["cost"]["judge"] == pytest.approx(0.04)
 
 
 def test_dry_run_touches_nothing(tmp_path: Path) -> None:
