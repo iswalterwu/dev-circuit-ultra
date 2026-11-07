@@ -10,13 +10,16 @@ slice count, no hidden acceptance suite and no required command shape.
 
 Every run is recorded under --out (default: bench/out/open-<timestamp>/):
 `run-01/dev.json`, `run-01/openspec.json`, the session traces
-`run-01/<side>-sessions/`, the final trees `run-01/final/<side>/`, the judge
-`run-01/judge*` and an aggregate `runs.json`. Feed the directory to
+`run-01/<side>-sessions/`, the final trees `run-01/final/<side>/`, the judges
+`run-01/judge*` and an aggregate `runs.json`. Each side also gets the
+mechanical error-path probes of `bench/probe.py`. Feed the directory to
 `bench/summarize.py` for the median table.
 
+Each run is judged `--judges` times (default 2), alternating which side is A.
 The judge gets EVIDENCE.md (commits, git status, pytest) because its copy has
 no .git, and it runs outside any repository so git cannot leak the bench.
-Re-judge saved results to measure the judge itself:
+`--judge-provider` / `--judge-model` pick a judge other than the model under
+test. Re-judge saved results to measure the judge itself:
 
     python bench/open/run_open_ab.py --rejudge bench/out/open-... --repeats 4
 
@@ -28,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BENCH))
 
 from _harness import (  # noqa: E402
     BASE_TAG,
@@ -53,11 +58,13 @@ from _harness import (  # noqa: E402
     read_usage,
     remove_tree,
     reset,
+    rubric_version,
     run_process,
     setup_pair,
     stage_judge,
     without_harness,
 )
+from probe import run_probes  # noqa: E402
 
 SKILLS = BENCH.parent / "skills" / "dev-circuit-ultra"
 BENCH_OPEN = BENCH / "open"
@@ -140,6 +147,8 @@ def run_one(label: str, repo: Path, workflow: str, skills: list[Path], prompt: s
     except json.JSONDecodeError:
         pass
 
+    probes = run_probes(repo)
+
     requirements = sorted(p for p in (repo / "docs" / "requirements").glob("*.md") if p.name != "README.md")
     specs = sorted((repo / "openspec" / "specs").rglob("*.md")) if (repo / "openspec" / "specs").exists() else []
     archive = sorted((repo / "openspec" / "changes" / "archive").rglob("*.md")) if (repo / "openspec").exists() else []
@@ -160,6 +169,7 @@ def run_one(label: str, repo: Path, workflow: str, skills: list[Path], prompt: s
         "diff": state,
         "tests": tests,
         "export": export,
+        "probes": probes,
         "docs": {
             "requirements_files": [p.relative_to(repo).as_posix() for p in requirements],
             "requirements_lines": sum(len(p.read_text(encoding="utf-8").splitlines()) for p in requirements),
@@ -222,7 +232,10 @@ def judge_run(run_dir: Path, finals: dict[str, Path], records: dict[str, dict],
         "seed": seed,
         "mapping": mapping,
         "evidence": evidence,
+        "provider": provider,
         "model": model,
+        "thinking": thinking,
+        "rubric": rubric_version(BENCH_OPEN),
         "exit": result["exit"],
         "seconds": result["seconds"],
         "usage": usage,
@@ -236,6 +249,25 @@ def judge_run(run_dir: Path, finals: dict[str, Path], records: dict[str, dict],
         record["raw_tail"] = text.strip().splitlines()[-20:]
     write_json(run_dir / f"{tag}.json", record)
     return record
+
+
+def swapped(mapping: dict[str, str]) -> dict[str, str]:
+    return {"A": mapping["B"], "B": mapping["A"]}
+
+
+def judge_round(run_dir: Path, finals: dict[str, Path], records: dict[str, dict],
+                mapping: dict[str, str], judges: int, pi: str, model: str, provider: str,
+                thinking: str, seed: int, evidence: bool) -> list[dict]:
+    """Judge one run `judges` times in parallel; every other judgment swaps A and B."""
+    plans = [(swapped(mapping) if repeat % 2 else mapping,
+              "judge" if repeat == 0 else f"judge-{repeat + 1}") for repeat in range(judges)]
+
+    def one(plan):
+        return judge_run(run_dir, finals, records, plan[0], pi, model, provider, thinking,
+                         seed, evidence=evidence, tag=plan[1])
+
+    with ThreadPoolExecutor(max_workers=len(plans)) as pool:
+        return list(pool.map(one, plans))
 
 
 def rejudge(out: Path, repeats: int, jobs: int, evidence: bool, label: str,
@@ -293,7 +325,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer", default="reviewer-fast", help="dev 侧预置的 reviewer agent")
     parser.add_argument("--judge", dest="judge", action="store_true", default=True)
     parser.add_argument("--no-judge", dest="judge", action="store_false")
+    parser.add_argument("--judges", type=int, default=2, help="每轮盲评几次，A/B 交替（默认 2）")
+    parser.add_argument("--judge-provider", default=None, help="盲评用的 provider（默认与 --provider 相同）")
     parser.add_argument("--judge-model", default=None, help="盲评用的模型（默认与 --model 相同）")
+    parser.add_argument("--judge-thinking", default=None, help="盲评的 thinking（默认与 --thinking 相同）")
     parser.add_argument("--judge-pi", default=None, help="盲评用的 pi（默认与 --pi 相同）")
     parser.add_argument("--seed", type=int, default=0, help="A/B 映射与顺序的随机种子")
     parser.add_argument("--timeout", type=int, default=3600, help="单侧会话超时（秒）")
@@ -309,16 +344,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=1, help="--rejudge 并行几个评委")
     parser.add_argument("--label", default=None, help="--rejudge 结果文件的标签")
     args = parser.parse_args(argv)
+    if args.judges < 1:
+        parser.error("--judges 至少是 1；不要盲评用 --no-judge")
 
     problem = Path(args.problem).read_text(encoding="utf-8").strip()
     pi = args.pi or ("pi" if args.dry_run else pi_command(None))
     judge_pi = args.judge_pi or pi
     judge_model = args.judge_model or args.model
+    judge_provider = args.judge_provider or args.provider
+    judge_thinking = args.judge_thinking or args.thinking
 
     if args.rejudge:
         label = args.label or ("ev" if args.evidence else "noev")
+        if not args.label and (args.judge_model or args.judge_provider):
+            label += "-" + re.sub(r"[^A-Za-z0-9.]+", "-", judge_model).strip("-")
         return rejudge(Path(args.rejudge).resolve(), args.repeats, args.jobs, args.evidence, label,
-                       judge_pi, judge_model, args.provider, args.thinking)
+                       judge_pi, judge_model, judge_provider, judge_thinking)
 
     temporary = args.root is None
     if args.root:
@@ -341,7 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"runs:   {args.runs}")
         print(f"model:  {args.provider}/{args.model}  thinking={args.thinking}")
         print(f"fixture:{args.fixture}")
-        print(f"judge:  {'on' if args.judge else 'off'}  ({judge_model}, "
+        print(f"judge:  {'on' if args.judge else 'off'}  ({args.judges} per run, "
+              f"{judge_provider}/{judge_model} thinking={judge_thinking}, "
               f"evidence {'on' if args.evidence else 'off'})")
         print("")
         print("setup:")
@@ -382,21 +424,24 @@ def main(argv: list[str] | None = None) -> int:
             records[side] = run_one(side, repo, workflow, skills, side_prompt, run_dir,
                                     pi, args.provider, args.model, args.thinking,
                                     Path(args.fixture), args.timeout)
+            probes = records[side]["probes"]
             print(f"  {side}: {records[side]['seconds']}s, "
-                  f"{records[side]['turns']} turns, ${records[side]['cost']}", flush=True)
+                  f"{records[side]['turns']} turns, ${records[side]['cost']}, "
+                  f"probes {probes['passed']}/{probes['applicable']}", flush=True)
 
         mapping = anonymize(args.seed + index)
         finals = {side: run_dir / "final" / side for side in records}
-        judge_record = None
+        judgments = []
         if args.judge:
-            judge_record = judge_run(run_dir, finals, records, mapping, judge_pi, judge_model,
-                                     args.provider, args.thinking, args.seed + index,
-                                     evidence=args.evidence)
-            if judge_record["parsed"]:
-                totals = {side: card["total"] for side, card in judge_record["result"].items()}
-                print(f"  judge: {json.dumps(totals)}", flush=True)
-            else:
-                print("  judge: 无法解析分数，原文见 judge.log", flush=True)
+            judgments = judge_round(run_dir, finals, records, mapping, args.judges, judge_pi,
+                                    judge_model, judge_provider, judge_thinking, args.seed + index,
+                                    evidence=args.evidence)
+            for item in judgments:
+                if item["parsed"]:
+                    totals = {side: card["total"] for side, card in item["result"].items()}
+                    print(f"  {item['tag']} (A={item['mapping']['A']}): {json.dumps(totals)}", flush=True)
+                else:
+                    print(f"  {item['tag']}: 无法解析分数，原文见 {item['tag']}.log", flush=True)
 
         runs.append({
             "index": index,
@@ -404,7 +449,8 @@ def main(argv: list[str] | None = None) -> int:
             "mapping": mapping,
             "dev": records.get("dev"),
             "openspec": records.get("openspec"),
-            "judge": judge_record,
+            "judge": judgments[0] if judgments else None,
+            "judge_repeats": judgments[1:],
         })
         write_json(out / "runs.json", {
             "problem": problem,
@@ -412,7 +458,10 @@ def main(argv: list[str] | None = None) -> int:
             "provider": args.provider,
             "model": args.model,
             "thinking": args.thinking,
+            "judge_provider": judge_provider if args.judge else None,
             "judge_model": judge_model if args.judge else None,
+            "judge_thinking": judge_thinking if args.judge else None,
+            "judges": args.judges if args.judge else 0,
             "seed": args.seed,
             "runs": runs,
         })

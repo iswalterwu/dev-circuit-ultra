@@ -19,6 +19,14 @@
   每轮存下两侧会话 trace 与最终代码树；成本含 reviewer 等子 agent；盲评在仓库外进行并附 `EVIDENCE.md`（提交、`git status`、pytest）；
   `--rejudge` 对已存产物重评（A/B 交替、可关 EVIDENCE），汇总里列出评委信度与盲评成本。
   `tests/test_bench_harness.py` 用桩 `pi` / `openspec` 覆盖这套流程，不花 token。
+- 开放 A/B 的测量：
+  - `bench/probe.py` 用 9 项机械探针试缺数据文件、坏 JSON、非数组、写不进去和小数兼容，自动找到新增的命令；runner 每侧记录 `probes`，汇总表多一行。
+  - 每轮默认评 2 次（`--judges`），第二次交换 A/B；汇总取每轮各次评审的中位数，另列不计收尾的分数。
+    少于 5 轮、评委与被测同模型、混用 rubric 版本、只评了 1 次，都会在汇总开头提示。
+  - `--judge-provider` / `--judge-model` / `--judge-thinking` 换评委；每次评审记下评委模型和 rubric 版本。
+  - rubric 的"收尾"不再按是否提交计分（提交数由 harness 记录）；同一个问题只在最相关的维度扣一次。
+  - 中立起点：OpenSpec 侧起点就豁免 `openspec/changes/archive`，初始化不再需要 `--no-verify`；两侧的 `.bench/` 写进 `.git/info/exclude`，会话 trace 不会被提交。
+  - 没有 pytest 汇总行时，测试摘要仍是字符串（原来是 list，汇总会崩）。
 
 ## 0.4.0
 

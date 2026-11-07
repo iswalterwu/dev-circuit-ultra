@@ -6,6 +6,7 @@ process output, changed-file state and the blind-judge plumbing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -21,6 +22,10 @@ PI_FALLBACK = Path.home() / ".pi" / "agent" / "bin" / "pi.cmd"
 BASE_TAG = "bench-base"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_IGNORES = (".git", ".bench", "__pycache__", ".pytest_cache", ".pi", ".dev-circuit")
+ARCHIVE_EXEMPTION = """
+# 起点预置：OpenSpec 的归档目录是它的工作流产物，不按 doc_guard 的禁止目录处理。
+openspec/changes/archive
+"""
 
 
 def pi_command(explicit: str | None = None) -> str:
@@ -171,7 +176,10 @@ def run_process(repo: Path, *command: str, timeout: int = 300, stdin: str | None
 
 def pytest_summary(output: str) -> str:
     lines = [line for line in output.splitlines() if re.search(r"\bpassed\b|\bfailed\b|\berror", line)]
-    return lines[-1].strip() if lines else output.strip().splitlines()[-1:] or ""
+    if lines:
+        return lines[-1].strip()
+    rest = output.strip().splitlines()
+    return rest[-1].strip() if rest else ""
 
 
 def changed(repo: Path, base: str) -> dict:
@@ -205,6 +213,12 @@ def setup_pair(root: Path, fixture: Path, bench_open: Path,
 
     for name, repo in repos.items():
         devcircuit("init", "--path", str(repo), "--name", "records")
+        # The session traces land in .bench/; keep them out of the agent's
+        # `git status` and out of its commits without touching the tree.
+        exclude = repo / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as handle:
+            handle.write("\n.bench/\n")
         for entry in fixture.iterdir():
             destination = repo / entry.name
             if entry.is_dir():
@@ -243,8 +257,12 @@ def setup_pair(root: Path, fixture: Path, bench_open: Path,
     if result.returncode != 0:
         raise RuntimeError(f"openspec init failed ({result.returncode}): "
                            f"{(result.stderr or result.stdout).strip()}")
+    # Neutral start: archiving is how OpenSpec closes a change, so the skeleton's
+    # doc_guard must not make the agent edit .dcuignore to commit it.
+    with (openspec_repo / ".dcuignore").open("a", encoding="utf-8") as ignore:
+        ignore.write(ARCHIVE_EXEMPTION)
     git(openspec_repo, "add", "-A")
-    git(openspec_repo, "commit", "-q", "--no-verify", "-m", "chore: init openspec")
+    git(openspec_repo, "commit", "-qm", "chore: init openspec")
 
     for repo in repos.values():
         git(repo, "tag", BASE_TAG)
@@ -263,6 +281,7 @@ def evidence_text(records: dict[str, dict]) -> str:
         "",
         "评审副本去掉了 `.git`。下面是 harness 在原仓库里取到的事实，两边格式相同；",
         "它是证据，不是结论。harness 自己的文件（`.bench/` 等）已排除。",
+        "按 rubric，是否已提交不计分；列出工作树状态，是为了看清里面留下了什么。",
     ]
     for label in sorted(records):
         record = records[label]
@@ -276,6 +295,14 @@ def evidence_text(records: dict[str, dict]) -> str:
         lines += [f"  - `{entry}`" for entry in status]
         lines.append(f"- 会话结束后 `python -m pytest -q`：{tests}")
     return "\n".join(lines) + "\n"
+
+
+def rubric_version(bench_open: Path) -> str:
+    """Short hash of the rubric and judge brief, so pooled scores can say if they mix versions."""
+    digest = hashlib.sha256()
+    for name in ("rubric.md", "judge.md"):
+        digest.update((bench_open / name).read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()[:8]
 
 
 def judge_prompt(bench_open: Path) -> str:
