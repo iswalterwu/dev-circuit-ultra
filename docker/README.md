@@ -2,6 +2,8 @@
 
 这不是一个完整的产品运行环境，而是 **挂载/权限边界** 的参考。开发 agent 和 archivist 必须跑在不同容器/不同用户下；只在 prompt 里写“不要读账本”不算隔离。
 
+这里是最强一级。日常更轻的默认做法是工具调用层拦截（`devcircuit hooks install`）或分 OS 用户；四档对比见 [`../hooks/README.md`](../hooks/README.md)。
+
 ## 前提
 
 1. 账本已用 `scripts/new-ledger.ps1` 创建在 **项目目录之外**。

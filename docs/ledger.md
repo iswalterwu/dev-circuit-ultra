@@ -25,16 +25,36 @@ dev-circuit-ultra 把“现在怎么做”和“为什么变成现在这样”�
                                          └─────────────────┘
 ```
 
-## 强隔离
+## 隔离
 
-只有“独立容器/用户 + 挂载隔离”能保证开发 agent 读不到账本：
+隔离分四档，成本和保证各不相同。默认从 hook 起步：它拦的是真实的工具调用，不是模型自觉。
+
+| 级别 | 做法 | 能保证什么 |
+|---|---|---|
+| 弱 | prompt 里写“不要读账本” | 只能防误读 |
+| **中（默认）** | `devcircuit hooks install`：工具调用层拦截 | agent 拿不到账本；跨平台、可审查 |
+| 强 | 账本属主是另一个 OS 用户 / ACL 不授权给开发进程 | 开发进程没有读权限 |
+| 最强 | dev / archivist 分容器；dev 不挂载账本、无凭证 | 进程内没有可达路径 |
+
+hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，加进 `.gitignore`）：
+
+```powershell
+devcircuit hooks install --harness pi --project D:\code\my-app --ledger D:\ledgers\my-app
+devcircuit hooks status --project D:\code\my-app
+```
+
+它也不许 agent 读 `guard.json` 本身——那里面就有账本路径。
+
+hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不用账本路径的命令（遍历文件系统）仍可能发现可读目录。要那种保证，用强/最强。完整说明见 [`hooks/README.md`](../hooks/README.md)。
+
+最强级别参考 `docker/compose.yaml`：
 
 - `dev` 容器：只挂项目；没有 `/ledger`；没有账本凭证；没有 Docker socket。
 - `archivist` 容器：项目只读 + 账本读写；不改项目。
 - `ledger` 容器：账本只读；供 human 查询。
 - 账本 repo 必须是私有的；开发容器不持有 remote 凭证。
 
-参考 `docker/compose.yaml`。在 prompt 里写“不要读”只是约定，不是隔离。
+在 prompt 里写“不要读”永远只是约定，不是隔离。
 
 ## 流程
 
