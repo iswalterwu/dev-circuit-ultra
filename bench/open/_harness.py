@@ -1,29 +1,35 @@
 """Small shared helpers for the open A/B runner.
 
-Only what the open run needs: git reset, pi invocation, usage totals, process
-output and changed-file state. The historical controlled runner is gone.
+Only what the open run needs: setup, git reset, pi invocation, usage totals,
+process output, changed-file state and the blind-judge plumbing.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 PI_FALLBACK = Path.home() / ".pi" / "agent" / "bin" / "pi.cmd"
 BASE_TAG = "bench-base"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EVAL_IGNORES = (".git", ".bench", "__pycache__", ".pytest_cache", ".pi", ".dev-circuit")
 
 
-def pi_command() -> str:
+def pi_command(explicit: str | None = None) -> str:
+    if explicit:
+        return explicit
     if os.name == "nt":
         candidate = Path(os.environ.get("PI_BIN", PI_FALLBACK))
         if candidate.exists():
             return str(candidate)
-    found = shutil.which("pi")
+    found = shutil.which(os.environ.get("PI_BIN", "pi"))
     if not found:
         raise SystemExit("pi not found; pass --pi or set PI_BIN")
     return found
@@ -52,6 +58,27 @@ def fill(prompt: str, **values: str) -> str:
     return prompt
 
 
+def devcircuit(*args: str, python: str | None = None) -> dict:
+    """Run the CLI from this checkout, so the bench does not need it installed."""
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT / "tools"),
+        "PYTHONIOENCODING": "utf-8",
+    }
+    result = subprocess.run(
+        [python or sys.executable, "-m", "devcircuit.cli", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"devcircuit {' '.join(args)} failed ({result.returncode}): "
+            f"{(result.stderr or result.stdout).strip()}")
+    return {"stdout": result.stdout, "stderr": result.stderr}
+
+
 def read_usage(session_dir: Path) -> dict:
     totals = {"input": 0, "output": 0, "cache_read": 0, "reasoning": 0, "cost": 0.0, "turns": 0}
     for path in session_dir.rglob("*.jsonl") if session_dir.exists() else []:
@@ -73,17 +100,18 @@ def read_usage(session_dir: Path) -> dict:
     return totals
 
 
-def run_process(repo: Path, *command: str, timeout: int = 300) -> dict:
+def run_process(repo: Path, *command: str, timeout: int = 300, stdin: str | None = None) -> dict:
     started = time.monotonic()
     try:
         result = subprocess.run(
             list(command),
             cwd=repo,
+            input=stdin,
             capture_output=True,
             text=True,
             encoding="utf-8",
             timeout=timeout,
-            env={**os.environ, "NO_COLOR": "1"},
+            env={**os.environ, "NO_COLOR": "1", "PYTHONIOENCODING": "utf-8"},
         )
         return {
             "command": " ".join(command),
@@ -119,3 +147,147 @@ def changed(repo: Path, base: str) -> dict:
         "diff_stat": diff.strip().splitlines(),
         "untracked": untracked,
     }
+
+
+def without_harness(lines: list[str]) -> list[str]:
+    return [line for line in lines
+            if not any(part in line for part in (".bench/", "__pycache__/", ".pytest_cache/", ".dev-circuit/"))]
+
+
+def setup_pair(root: Path, fixture: Path, bench_open: Path,
+               openspec_cmd: str = "openspec", reviewer: str = "reviewer-fast",
+               overwrite: bool = False) -> dict[str, Path]:
+    """Create both repos from scratch and tag the starting point."""
+    repos = {"dev": root / "dev-circuit", "openspec": root / "openspec"}
+    if root.exists() and any(root.iterdir()):
+        if not overwrite:
+            raise SystemExit(f"{root} 不是空目录；加 --overwrite 重新生成两侧仓库。")
+        shutil.rmtree(root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    for name, repo in repos.items():
+        devcircuit("init", "--path", str(repo), "--name", "records")
+        for entry in fixture.iterdir():
+            destination = repo / entry.name
+            if entry.is_dir():
+                shutil.copytree(entry, destination, dirs_exist_ok=True)
+            else:
+                shutil.copyfile(entry, destination)
+        shutil.copyfile(bench_open / "AGENTS.md", repo / "AGENTS.md")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "chore: add records fixture")
+
+    dev = repos["dev"]
+    reviewer_file = dev / ".dev-circuit" / "reviewer.json"
+    reviewer_file.parent.mkdir(parents=True, exist_ok=True)
+    reviewer_file.write_text(json.dumps({"mode": "agent", "agent": reviewer}), encoding="utf-8")
+    agent_source = bench_open / f"{reviewer}.md"
+    if agent_source.is_file():
+        agents_dir = Path.home() / ".pi" / "agent" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(agent_source, agents_dir / agent_source.name)
+    git(dev, "add", "-A")
+    git(dev, "commit", "-qm", "chore: reviewer default for the benchmark")
+
+    openspec_repo = repos["openspec"]
+    if not Path(openspec_cmd).is_file():
+        # On Windows the npm shim is openspec.cmd, which CreateProcess will not
+        # find from a bare "openspec" argument.
+        resolved = shutil.which(openspec_cmd)
+        if not resolved:
+            raise SystemExit(f"找不到 openspec：{openspec_cmd}（用 --openspec-cmd 指定）")
+        openspec_cmd = resolved
+    result = subprocess.run(
+        [openspec_cmd, "init", "--tools", "pi", "--language", "zh-CN",
+         "--no-animation", "--no-copilot-cloud"],
+        cwd=openspec_repo, capture_output=True, text=True, encoding="utf-8",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"openspec init failed ({result.returncode}): "
+                           f"{(result.stderr or result.stdout).strip()}")
+    git(openspec_repo, "add", "-A")
+    git(openspec_repo, "commit", "-q", "--no-verify", "-m", "chore: init openspec")
+
+    for repo in repos.values():
+        git(repo, "tag", BASE_TAG)
+    return repos
+
+
+def copy_eval_tree(src: Path, dst: Path) -> None:
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*EVAL_IGNORES))
+
+
+def judge_prompt(bench_open: Path) -> str:
+    """The judge instruction, with the output contract appended."""
+    text = (bench_open / "judge.md").read_text(encoding="utf-8").strip()
+    text += """
+
+补充：现在是自动化盲评。`A/`、`B/`、`problem.md`、`rubric.md` 都在当前目录。
+
+先按 `rubric.md` 的输出格式写逐维度的文字与证据，然后在最后追加一个 ```json 代码块，只放分数，键名固定：
+
+```json
+{"A": {"product": 0, "correctness": 0, "tests": 0, "docs": 0, "code": 0, "closeout": 0, "total": 0},
+ "B": {"product": 0, "correctness": 0, "tests": 0, "docs": 0, "code": 0, "closeout": 0, "total": 0},
+ "verdict": "一句话", "uncertainty": "一句话"}
+```
+
+分数是 1–5 的整数，`total` 是六项之和（满分 30）。不要输出别的代码块。
+"""
+    return text
+
+
+def stage_judge(destination: Path, copies: dict[str, Path], bench_open: Path) -> None:
+    """Lay out a self-contained judge directory: A/, B/, problem, rubric, judge."""
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    for label, source in copies.items():
+        copy_eval_tree(source, destination / label)
+    for name in ("problem.md", "rubric.md"):
+        shutil.copyfile(bench_open / name, destination / name)
+    (destination / "judge.md").write_text(judge_prompt(bench_open), encoding="utf-8")
+
+
+SCORE_FENCE = re.compile(r"```json\s*")
+SCORE_KEYS = ("product", "correctness", "tests", "docs", "code", "closeout")
+
+
+def parse_scores(text: str) -> dict | None:
+    """Take the last fenced JSON block that looks like a score card.
+
+    `raw_decode` walks the nested object properly; a non-greedy regex would stop
+    at the first inner brace and reject a valid card.
+    """
+    decoder = json.JSONDecoder()
+    for match in reversed(list(SCORE_FENCE.finditer(text or ""))):
+        try:
+            payload, _ = decoder.raw_decode(text[match.end():].lstrip())
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or not {"A", "B"} <= set(payload):
+            continue
+        cleaned = {}
+        for label in ("A", "B"):
+            card = payload.get(label)
+            if not isinstance(card, dict):
+                break
+            scores = {key: int(card[key]) for key in SCORE_KEYS if isinstance(card.get(key), (int, float))}
+            if len(scores) != len(SCORE_KEYS):
+                break
+            scores["total"] = int(card.get("total") or sum(scores.values()))
+            cleaned[label] = scores
+        else:
+            cleaned["verdict"] = str(payload.get("verdict") or "")
+            cleaned["uncertainty"] = str(payload.get("uncertainty") or "")
+            return cleaned
+    return None
+
+
+def anonymize(seed: int) -> dict[str, str]:
+    """Which side hides behind A and B in this run."""
+    mapping = ["dev", "openspec"]
+    random.Random(seed).shuffle(mapping)
+    return {"A": mapping[0], "B": mapping[1]}
