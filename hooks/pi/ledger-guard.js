@@ -197,7 +197,8 @@ export default function (pi) {
         return {
           block: true,
           reason: `账本边界：${event.toolName} 试图访问项目外账本（${preview}）。`
-            + "开发侧不读账本；需要历史时停下来问 human。",
+            + "开发侧不读账本，不要换路径、换工具绕开，也不要读 .dev-circuit/guard.json 找路径；"
+            + "需要历史时停下来问 human。",
         };
       }
     }

@@ -67,6 +67,7 @@ def test_blocks_ledger_access(tmp_path: Path) -> None:
     for result in judge(project, tmp_path, cases):
         assert result is not None and result["block"] is True
         assert "账本边界" in result["reason"]
+        assert "绕开" in result["reason"]  # the skill leaves this guidance to the block message
 
 
 def test_allows_normal_work(tmp_path: Path) -> None:

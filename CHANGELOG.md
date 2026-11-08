@@ -27,6 +27,9 @@
   `spec_check --report` 首行给出要求总数和有测试、靠演示、都没有的各几条；`--list-rules` 和 `devcircuit rules`
   给每条规则附一句说明，并列出检查范围。`--json` 和退出码不变；靠"通过时没有输出"判断结果的脚本要改看退出码。
   pre-commit 模板里 `spec_check` 的失败提示不再提已经删掉的规则。
+- 去掉重复文字：技能 description 只留一句定位和触发条件；SKILL.md 去掉讲 hook 的一段，"不要绕开、不读 `guard.json`"
+  改由 hook 的拦截提示说；AGENTS 模板第 7 节从 7 条减到 3 条，其余规则以技能为准。
+  已有项目的 AGENTS.md 不用改；想精简，可以照新模板的第 7 节替换。
 
 ## 0.4.0
 
