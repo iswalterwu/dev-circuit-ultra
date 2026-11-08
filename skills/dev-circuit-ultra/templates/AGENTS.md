@@ -10,7 +10,7 @@
 
 | 任务 | 读 |
 |---|---|
-| 做或续做一个功能 | `specs/<feature>/spec.md`（含现行设计；框架级再读同目录的 `design.md`）+ dev-circuit-ultra 技能 |
+| 做或续做一个功能 | `specs/<feature>/spec.md`（目标、范围、切片；框架级再读同目录的 `design.md`）、受影响的能力规格 + dev-circuit-ultra 技能 |
 | 查某个能力的现行要求 | `docs/requirements/<能力>.md` |
 | 改某个代码目录 | 该目录的 README |
 | 找零散的待做事项 | `specs/backlog.md` |

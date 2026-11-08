@@ -54,85 +54,10 @@ def test_ac_ids_scoped_per_file(tmp_path):
     ]
 
 
-def test_card_targets(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
-    write(tmp_path, "docs/requirements/b.md", "代号：BBB\n- AC-001-1：old\n")
-    write(tmp_path, "specs/change/spec.md", """# Change
-## 规格变化
-- 修改 DEMO-9：missing
-- 删除 BBB:AC-009-9
-- 新增 DEMO-1：exists
-- 新增 XYZ-1：unknown code
-- 新增 BBB:AC-002-1：cannot add old-style IDs
-- 修改 BBB:AC-001-1：valid old target
-- 删除 DEMO-1
-## 其他
-- 修改 DEMO-99：outside section
-""")
-    findings = scan(tmp_path)
-    assert Counter(f.rule for f in findings) == {
-        "unknown-target": 3, "id-exists": 1, "unknown-code": 1,
-    }
-    assert next(f.message for f in findings if f.line == 3) == "目标编号不存在：DEMO-9"
-    assert next(f.message for f in findings if f.line == 7) == "新增要求须使用代号-数字：BBB:AC-002-1"
-
-
-def test_merged_changes_require_heading_update(tmp_path, capsys):
-    requirements = write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n- DEMO-2：two\n")
-    card = write(tmp_path, "specs/change/spec.md", """# Change
-## 规格变化
-- 新增 DEMO-3：three
-- 修改 DEMO-1：updated
-- 删除 DEMO-2
-""")
-    write(tmp_path, "tests/test_demo.py", "# DEMO-1 DEMO-3\n")
-    assert scan(tmp_path) == []
-
-    requirements.write_text("代号：DEMO\n- DEMO-1：updated\n- DEMO-3：three\n", encoding="utf-8")
-    args = ["--root", str(tmp_path), "--json"]
-    assert main(args) == 1
-    findings = json.loads(capsys.readouterr().out)
-    assert [(f["rule"], f["line"]) for f in findings] == [("id-exists", 3), ("unknown-target", 5)]
-    hint = "（如果是本卡收尾已合并，把本节标题改为'## 规格变化（已合并）'）"
-    assert all(f["message"].endswith(hint) for f in findings)
-
-    card.write_text(card.read_text(encoding="utf-8").replace("## 规格变化", "## 规格变化（已合并）"),
-                    encoding="utf-8")
-    assert main(args) == 0
-    assert json.loads(capsys.readouterr().out) == []
-    assert card.exists()
-
-
-def test_bom_in_requirements_and_card(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "\ufeff代号：DEMO\n- DEMO-1：one\n")
-    write(tmp_path, "specs/add/spec.md", "\ufeff## 规格变化\n- 新增 DEMO-2：two\n")
+def test_bom_in_requirements_and_references(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "\ufeff代号：DEMO\n- DEMO-1：one\n- DEMO-2：two\n")
     write(tmp_path, "tests/test_demo.py", "\ufeff# DEMO-1 DEMO-2\n")
     assert scan(tmp_path) == []
-
-
-def test_malformed_change_bullets_reported_only_in_active_section(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
-    write(tmp_path, "specs/change/spec.md", """# Change
-## 范围
-- 做：导出
-## 规格变化
-- 新增：DEMO-1
-- 修改 DEMO-one：bad ID
-- 删除
-- 新增 DEMO-2：valid
-  - 例：嵌套说明
-
-普通说明。
-## 规格变化（已合并）
-- 新增：DEMO-3
-## 其他
-- 不做：上传
-""")
-    assert [(f.rule, f.path, f.line) for f in scan(tmp_path)] == [
-        ("bad-change", "specs/change/spec.md", 5),
-        ("bad-change", "specs/change/spec.md", 6),
-        ("bad-change", "specs/change/spec.md", 7),
-    ]
 
 
 @pytest.mark.parametrize("args", [[], ["--json"], ["--json", "--report"]])
@@ -153,16 +78,6 @@ def test_cli_outputs_utf8_with_legacy_stdio_encoding(tmp_path, args):
         assert result.stderr.decode("utf-8").splitlines() == ["未被测试引用：DEMO-1"]
 
 
-def test_conflicting_cards(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
-    for name in ("a", "b"):
-        write(tmp_path, f"specs/{name}/spec.md", "## 规格变化\n- 修改 DEMO-1：changed\n")
-    findings = scan(tmp_path)
-    assert [(f.rule, f.path, f.line) for f in findings] == [
-        ("conflict", "specs/b/spec.md", 2),
-    ]
-
-
 def test_dangling_ref(tmp_path):
     write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
     write(tmp_path, "src/x.py", "# source\n# DEMO-99\n")
@@ -172,11 +87,11 @@ def test_dangling_ref(tmp_path):
     ]
 
 
-def test_inflight_added_id_is_defined(tmp_path):
+def test_cards_do_not_define_requirements(tmp_path):
     write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
-    write(tmp_path, "specs/add/spec.md", "## 规格变化\n- 新增 DEMO-2：two\n")
+    write(tmp_path, "specs/add/spec.md", "## 规格变化\n- 新增 DEMO-2：two\n- 删除：随便写\n")
     write(tmp_path, "tests/t.py", "# DEMO-2\n")
-    assert scan(tmp_path) == []
+    assert [(f.rule, f.path) for f in scan(tmp_path)] == [("dangling-ref", "tests/t.py")]
 
 
 def test_no_false_positives(tmp_path):
@@ -236,17 +151,11 @@ def test_report_and_cli(tmp_path, capsys):
     assert items[0]["rule"] == "dangling-ref"
     assert main(["--root", str(tmp_path / "absent")]) == 2
     assert main(["--invalid"]) == 2
+
+
 def test_english_specs(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "Code: DEMO\n- DEMO-1: one\n")
-    write(tmp_path, "specs/add/spec.md", "## Spec changes\n- add DEMO-2: two\n- modify DEMO-1: tweak\n")
+    write(tmp_path, "docs/requirements/demo.md", "Code: DEMO\n- DEMO-1: one\n- DEMO-2: two\n")
     write(tmp_path, "tests/test_demo.py", "def test_demo():\n    assert 'DEMO-1' and 'DEMO-2'\n")
-
-    assert scan(tmp_path) == []
-
-
-def test_english_merged_heading_is_inactive(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "capability: DEMO\n- DEMO-1: one\n")
-    write(tmp_path, "specs/change/spec.md", "## Specification changes (merged)\n- add DEMO-1: exists\n")
 
     assert scan(tmp_path) == []
 
@@ -265,28 +174,6 @@ def test_relaxed_definition_shapes(tmp_path):
         "| DEMO-6 | six |\n",
     )
     write(tmp_path, "tests/test_demo.py", "# DEMO-1 DEMO-2 DEMO-3 DEMO-4 DEMO-5 DEMO-6\n")
-
-    assert scan(tmp_path) == []
-
-
-def test_change_bullets_accept_other_markers(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
-    write(
-        tmp_path,
-        "specs/change/spec.md",
-        "## 规格变化\n"
-        "1. 修改 DEMO-1：x\n"
-        "* 新增 DEMO-2：y\n"
-        "- 删除 DEMO-9：missing\n",
-    )
-    write(tmp_path, "tests/test_demo.py", "# DEMO-2\n")
-
-    assert [(f.rule, f.line) for f in scan(tmp_path)] == [("unknown-target", 4)]
-
-
-def test_nested_bullets_are_notes_not_entries(tmp_path):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n")
-    write(tmp_path, "specs/change/spec.md", "## 规格变化\n- 新增 DEMO-1：x\n  - 例：随便写\n")
 
     assert scan(tmp_path) == []
 
@@ -344,23 +231,3 @@ def test_legacy_reference_must_exist(tmp_path):
     assert [(f.rule, f.message) for f in scan(tmp_path)] == [
         ("dangling-ref", "引用的编号不存在：DEMO:AC-009-9"),
     ]
-
-
-def test_merged_hint_follows_the_card_language(tmp_path, capsys):
-    write(tmp_path, "docs/requirements/demo.md", "Code: DEMO\n- DEMO-1: one\n")
-    write(tmp_path, "specs/add/spec.md", "## Spec changes\n- add DEMO-1: merged already\n")
-
-    assert main(["--root", str(tmp_path), "--json"]) == 1
-    finding = json.loads(capsys.readouterr().out)[0]
-    assert finding["rule"] == "id-exists"
-    assert "Spec changes (merged)" in finding["message"]
-    assert "规格变化" not in finding["message"]
-
-
-def test_chinese_cards_keep_the_chinese_hint(tmp_path, capsys):
-    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
-    write(tmp_path, "specs/add/spec.md", "## 规格变化\n- 新增 DEMO-1：已合并\n")
-
-    assert main(["--root", str(tmp_path), "--json"]) == 1
-    finding = json.loads(capsys.readouterr().out)[0]
-    assert "规格变化（已合并）" in finding["message"]

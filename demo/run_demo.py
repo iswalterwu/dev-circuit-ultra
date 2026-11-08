@@ -3,8 +3,8 @@
 The demo is deliberately project-specific and disposable; it is not part of the
 skill. It checks the methodology boundaries:
 
-- a current design card, no rejected alternatives;
-- design change by overwriting, not appending;
+- requirements written once, in the capability spec; the card holds goal, scope, slices;
+- design change by overwriting the requirement, not appending;
 - implementation and tests derived from the design;
 - a private ledger outside the project;
 - discarded ideas only in the ledger;
@@ -30,7 +30,7 @@ NEW_PROJECT = ROOT / "skills" / "dev-circuit-ultra" / "scripts" / "new-project.p
 NEW_LEDGER = ROOT / "skills" / "dev-circuit-ultra" / "scripts" / "new-ledger.ps1"
 ARCHIVIST = ROOT / "demo" / "archivist_standin.py"
 
-CARD_V1 = """# add-greet：向用户打招呼
+CARD = """# add-greet：向用户打招呼
 
 ## 目标
 给 demo 项目加一个最小的 `greet` 命令。
@@ -38,68 +38,10 @@ CARD_V1 = """# add-greet：向用户打招呼
 ## 范围
 - 做：一个名字，输出问候。
 - 不做：网络、配置文件。
-- 反目标：空名字也输出问候。
-
-## 结构影响
-- 动哪些模块：新增 `greet.py`。
-- 新契约 / 新数据结构 / 全局机制：无。
-- 结论：普通。
-
-## 设计
-- `greet(name)` 去掉首尾空格；空名字抛 `ValueError`。
-- CLI：`python -m greet --name NAME`，输出 `HELLO, NAME!`。
-- 只保留这一种输出；不讨论其他风格。
-
-## 规格变化
-- 新增 GREET-1：`greet` 输出问候。例：`greet("Ada")` → `HELLO, Ada!`。
-
-## 风险
-- 风险档：低。
-- 风险加项：无。
-- 验收方式：功能结束时一起验收。
 
 ## 切片
 - S1：实现 greet 和测试。
   - [x] 写 greet.py 和 tests/test_greet.py。
-
-## 待定
-无。
-"""
-
-CARD_V2 = """# add-greet：向用户打招呼
-
-## 目标
-给 demo 项目加一个最小的 `greet` 命令。
-
-## 范围
-- 做：一个名字，输出问候。
-- 不做：网络、配置文件。
-- 反目标：空名字也输出问候。
-
-## 结构影响
-- 动哪些模块：新增 `greet.py`。
-- 新契约 / 新数据结构 / 全局机制：无。
-- 结论：普通。
-
-## 设计
-- `greet(name)` 去掉首尾空格；空名字抛 `ValueError`。
-- CLI：`python -m greet --name NAME`，输出 `Hello, NAME!`。
-- 保留输入的大小写，不做自动大写。
-
-## 规格变化
-- 新增 GREET-1：`greet` 输出问候。例：`greet("Ada")` → `Hello, Ada!`。
-
-## 风险
-- 风险档：低。
-- 风险加项：无。
-- 验收方式：功能结束时一起验收。
-
-## 切片
-- S1：实现 greet 和测试。
-  - [x] 写 greet.py 和 tests/test_greet.py。
-
-## 待定
-无。
 """
 
 GREET = '''"""Minimal greet CLI for the dev-circuit-ultra demo."""
@@ -147,9 +89,13 @@ def test_GREET_1_rejects_empty_name():
         greet("   ")
 '''
 
-STUB = """# Greet
+REQUIREMENTS_V1 = """# Greet
 
 代号：GREET
+
+- GREET-1：`greet(name)` 输出去掉首尾空格后的问候；空名字报错。
+  - 例：`greet("Ada")` → `HELLO, Ada!`。
+  - 证明：`tests/test_greet.py` 中的 `test_GREET_1_greets_name`。
 """
 
 REQUIREMENTS = """# Greet
@@ -200,11 +146,14 @@ def main() -> int:
         project = base / "project"
         ledger = base / "ledger"
         card = project / "specs" / "add-greet" / "spec.md"
+        requirements = project / "docs" / "requirements" / "greet.md"
 
         run([PWSH, "-NoProfile", "-File", str(NEW_PROJECT), "-Path", str(project), "-Name", "Demo"])
         run([PWSH, "-NoProfile", "-File", str(NEW_LEDGER), "-Path", str(ledger)])
 
-        write(card, CARD_V1)
+        # The approved design lives where it stays: the requirement, written once.
+        write(card, CARD)
+        write(requirements, REQUIREMENTS_V1)
         run(
             [
                 sys.executable,
@@ -222,8 +171,8 @@ def main() -> int:
             ]
         )
 
-        # Design change: overwrite the card, delete the rejected style from the project.
-        write(card, CARD_V2)
+        # Design change: overwrite the requirement; the rejected style leaves the project.
+        write(requirements, REQUIREMENTS)
         run(
             [
                 sys.executable,
@@ -250,20 +199,13 @@ def main() -> int:
 
         write(project / "greet.py", GREET)
         write(project / "tests" / "test_greet.py", TEST)
-        # The capability code exists from the start; the new ID is only merged at close.
-        write(project / "docs" / "requirements" / "greet.md", STUB)
 
         checks = ["pytest", "scripts/doc_guard.py", "scripts/spec_check.py"]
         run([sys.executable, "-m", "pytest", "-q"], cwd=project)
         run([sys.executable, "scripts/doc_guard.py"], cwd=project)
         run([sys.executable, "scripts/spec_check.py"], cwd=project)
 
-        # Close: merge the current requirement, then delete the card.
-        write(project / "docs" / "requirements" / "greet.md", REQUIREMENTS)
-        card_text = card.read_text(encoding="utf-8").replace("## 规格变化", "## 规格变化（已合并）")
-        write(card, card_text)
-        # The card is deleted immediately after the merge; spec_check runs on the
-        # final tree, where the requirement exists only in the capability spec.
+        # Close: the requirement is already current, so closing only deletes the card.
         shutil.rmtree(project / "specs" / "add-greet")
         run([sys.executable, "scripts/doc_guard.py"], cwd=project)
         run([sys.executable, "scripts/spec_check.py"], cwd=project)
@@ -343,7 +285,7 @@ def main() -> int:
         assert hook_verdict("Read", {"file_path": str(project / "greet.py")}) == 0
         checks.append("hook")
 
-        final_spec = (project / "docs" / "requirements" / "greet.md").read_text(encoding="utf-8")
+        final_spec = requirements.read_text(encoding="utf-8")
         print("PASS dev-circuit-ultra demo")
         print(f"project: {project}")
         print(f"ledger:  {ledger}")

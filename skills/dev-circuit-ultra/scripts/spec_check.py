@@ -1,6 +1,7 @@
-"""spec_check v0.4.0
+"""spec_check v0.5.0
 
-用途：只检查要求编号是否完整一致，不要求写满任何字段。
+用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段。
+在研功能的卡（specs/）不参与检查：要求直接写在能力规格里。
 用法：python spec_check.py [--root DIR] [--json] [--report] [--ignore GLOB]... [--ignore-rule RULE]...
 退出码：0 无错误；1 有错误；2 根目录不存在或参数错误。
 --report 列出未被测试引用和标为演示的要求，不影响退出码。
@@ -11,9 +12,6 @@
 认的写法（不强制某一种 Markdown 形状）：
   文件头        代号：DEMO / Code: DEMO / capability: DEMO
   要求          - DEMO-1：… / * DEMO-1: … / + DEMO-1：… / 1. DEMO-1：… / | DEMO-1 | … |
-  规格变化      二级标题 规格变化 / Spec changes / Specification changes / Requirement changes
-  变化条目      新增|修改|删除 / add|added|modify|modified|change|changed|remove|removed|delete|deleted
-  已合并        标题改成 规格变化（已合并）/ Spec changes (merged) 后不再检查本节
 忽略白名单：--ignore GLOB、项目根目录的 .dcuignore、--ignore-rule RULE。
 """
 
@@ -27,17 +25,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
     "bad-header",
     "dup-id",
-    "bad-change",
-    "conflict",
-    "unknown-target",
-    "unknown-code",
-    "id-exists",
     "dangling-ref",
 )
 
@@ -58,31 +51,7 @@ HEADER_PREFIX = re.compile(r"^(?i:代号|code|capability)\s*[：:]")
 HEADER = re.compile(r"^(?i:代号|code|capability)\s*[：:]\s*([A-Z]{2,8})\s*$")
 DEFINITION = re.compile(BULLET + r"(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*[：:]\s*")
 TABLE_DEFINITION = re.compile(r"^\|\s*(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*\|")
-CHANGE = re.compile(
-    BULLET + r"(新增|修改|删除|add|added|modify|modified|change|changed"
-    r"|remove|removed|delete|deleted)\s+([A-Z]{2,8}-\d+|[A-Z]{2,8}:AC-\d{3}-\d+)\b",
-    re.IGNORECASE,
-)
 DEMONSTRATION = re.compile(r"^\s+- (?:证明[：:].*演示|demonstrated by[：:])")
-ACTIVE_SECTIONS = frozenset(
-    section.casefold() for section in (
-        "## 规格变化",
-        "## Spec changes",
-        "## Specification changes",
-        "## Requirement changes",
-    )
-)
-MERGED_HINT = "（如果是本卡收尾已合并，把本节标题改为'## 规格变化（已合并）'）"
-MERGED_HINT_EN = (" (if this card's closeout already merged this section, "
-                  "rename the heading to '## Spec changes (merged)')")
-CJK = re.compile(r"[一-鿿]")
-
-
-def merged_hint(english: bool) -> str:
-    """Keep the hint in the card's language."""
-    return MERGED_HINT_EN if english else MERGED_HINT
-BAD_CHANGE = ("规格变化条目格式不对：应以 '- 新增 <编号>'、'- 修改 <编号>' 或 '- 删除 <编号>' 开头"
-              "（英文可用 '- add <ID>' 等）")
 
 
 @dataclass(frozen=True)
@@ -144,15 +113,6 @@ def _ignores(root: Path, ignores, ignore_file, use_ignore_file: bool) -> list[st
     return patterns
 
 
-def _normalized_action(verb: str) -> str:
-    lowered = verb.lower()
-    if verb == "新增" or lowered in {"add", "added"}:
-        return "新增"
-    if verb == "修改" or lowered in {"modify", "modified", "change", "changed"}:
-        return "修改"
-    return "删除"
-
-
 def _requirements(root: Path, patterns=()):
     findings: list[Finding] = []
     codes: dict[str, str] = {}
@@ -209,25 +169,6 @@ def _requirements(root: Path, patterns=()):
     return findings, codes, requirements, legacy, demonstrations
 
 
-def _changes(root: Path, findings: list[Finding], patterns=()):
-    for path in sorted((root / "specs").glob("*/spec.md")):
-        relative = path.relative_to(root).as_posix()
-        if path_is_ignored(relative, patterns):
-            continue
-        text = path.read_text(encoding="utf-8-sig")
-        english = CJK.search(text) is None
-        in_section = False
-        for number, line in enumerate(text.splitlines(), 1):
-            if line.startswith("## "):
-                in_section = line.strip().casefold() in ACTIVE_SECTIONS
-            elif in_section and re.match(BULLET, line):
-                if match := CHANGE.match(line):
-                    yield (relative, number, _normalized_action(match.group(1)),
-                           match.group(2), english)
-                else:
-                    findings.append(Finding("bad-change", relative, number, BAD_CHANGE))
-
-
 def _references(root: Path, codes, patterns=()):
     if not codes:
         return
@@ -266,34 +207,12 @@ def _is_test(path: Path) -> bool:
 
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
          use_ignore_file: bool = True) -> list[Finding]:
-    """Check declared IDs, in-flight changes and references in source files."""
+    """Check declared IDs and the references in source files."""
     root = Path(root)
     patterns = _ignores(root, ignores, ignore_file, use_ignore_file)
     findings, codes, requirements, legacy, _ = _requirements(root, patterns)
-    added: set[str] = set()
-    changed_by: dict[str, str] = {}
-    for path, number, action, identifier, english in _changes(root, findings, patterns):
-        hint = merged_hint(english)
-        if identifier in changed_by and changed_by[identifier] != path:
-            findings.append(Finding("conflict", path, number,
-                                    f"编号同时出现在另一张卡：{identifier}（{changed_by[identifier]}）"))
-        else:
-            changed_by[identifier] = path
-        if action == "新增":
-            if ":" in identifier:
-                findings.append(Finding("unknown-target", path, number,
-                                        f"新增要求须使用代号-数字：{identifier}"))
-            elif identifier.split("-", 1)[0] not in codes:
-                findings.append(Finding("unknown-code", path, number, f"代号未声明：{identifier}"))
-            elif identifier in requirements:
-                findings.append(Finding("id-exists", path, number, f"编号已存在：{identifier}{hint}"))
-            else:
-                added.add(identifier)
-        elif identifier not in requirements and identifier not in legacy:
-            tail = hint if action == "删除" else ""
-            findings.append(Finding("unknown-target", path, number, f"目标编号不存在：{identifier}{tail}"))
     for path, number, identifier in _references(root, codes, patterns):
-        if identifier in requirements or identifier in added or identifier in legacy:
+        if identifier in requirements or identifier in legacy:
             continue
         findings.append(Finding("dangling-ref", path.as_posix(), number, f"引用的编号不存在：{identifier}"))
 

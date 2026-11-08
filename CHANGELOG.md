@@ -6,7 +6,9 @@
 
 - 脚手架：`.gitignore` 带上常见的缓存和依赖目录；文档地图不再把还不存在的 `architecture.md` 写成已有；AGENTS 模板注明检查器直接运行、不必读源码。
 - `doc_guard --include GLOB`：把默认范围之外的 `.md` 也纳入扫描；ignore 优先于 include。
-- `spec_check` 的"已合并"提示跟随卡片语言：英文卡不再收到中文提示。
+- 要求只写一处：功能的行为要求直接改在 `docs/requirements/<能力>.md`，意图卡只留目标、范围和切片；收尾不再合并规格、改标题。
+  `spec_check`（0.5.0）不再读意图卡，去掉 `bad-change`、`conflict`、`unknown-target`、`unknown-code`、`id-exists` 五条规则；
+  直接运行脚本时再用 `--ignore-rule` 指定这些规则名会报参数错误。
 - demo 增加工具调用层边界：hook 在读取之前拦下账本，绝对路径和相对路径都拦。
 - 删除 A/B 评测：`bench/`、README 里的 A/B 结果和对比图、演示视频里的 A/B 片段。
 
