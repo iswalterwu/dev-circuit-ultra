@@ -76,6 +76,7 @@ TEST = '''import pytest
 from greet import greet
 
 
+# GREET-1
 def test_GREET_1_greets_name():
     assert greet("Ada") == "Hello, Ada!"
 
@@ -95,7 +96,6 @@ REQUIREMENTS_V1 = """# Greet
 
 - GREET-1：`greet(name)` 输出去掉首尾空格后的问候；空名字报错。
   - 例：`greet("Ada")` → `HELLO, Ada!`。
-  - 证明：`tests/test_greet.py` 中的 `test_GREET_1_greets_name`。
 """
 
 REQUIREMENTS = """# Greet
@@ -104,7 +104,6 @@ REQUIREMENTS = """# Greet
 
 - GREET-1：`greet(name)` 输出去掉首尾空格后的问候；空名字报错。
   - 例：`greet("Ada")` → `Hello, Ada!`。
-  - 证明：`tests/test_greet.py` 中的 `test_GREET_1_greets_name`。
 """
 
 

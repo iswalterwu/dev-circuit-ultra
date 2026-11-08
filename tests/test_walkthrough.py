@@ -35,7 +35,6 @@ def test_walkthrough_normal_and_framework(tmp_path):
 
 - DEMO-1：导出当前一条记录。
   - 例：选中一条记录后导出，得到该记录。
-  - 证明：src/test_demo.py
 - DEMO-3：导出后弹出旧版提示。
 """)
 
@@ -45,17 +44,14 @@ def test_walkthrough_normal_and_framework(tmp_path):
 
 - DEMO-1：导出当前选中的全部记录。
   - 例：选中两条时导出两条。
-  - 证明：src/test_demo.py
 - DEMO-2：支持 CSV 导出。
   - 例：选择 CSV 时生成带表头的 CSV。
-  - 证明：src/test_demo.py
 """)
     sync = write(root, "docs/requirements/sync.md", """# 同步能力
 代号：SYNC
 
 - SYNC-1：同步成功后可读回相同的记录。
   - 例：同步两条记录后读回两条相同记录。
-  - 证明：src/test_demo.py
 """)
     ordinary = write(root, "specs/add-export/spec.md", """# add-export：扩充导出格式
 

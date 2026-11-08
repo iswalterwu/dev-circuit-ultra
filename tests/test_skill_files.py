@@ -42,6 +42,15 @@ def test_framework_structure_is_written_once():
     assert "docs/architecture.md" in read("framework.md")
 
 
+def test_tests_carry_the_proof():
+    # The requirement ID in a test is the proof. The template asks for no test paths, which drifted
+    # from the real tests, and no link to another document, which agents filled by inventing one.
+    template = read("templates/requirements.md")
+    assert "<测试文件>" not in template and "](<路径>)" not in template
+    assert "证明：演示" in template
+    assert "能力规格里不写测试路径" in read("SKILL.md")
+
+
 def test_scaffold_ignores_caches_and_does_not_promise_architecture():
     assert "__pycache__/" in read("templates/project/.gitignore")
     docs_map = read("templates/project/docs/README.md")

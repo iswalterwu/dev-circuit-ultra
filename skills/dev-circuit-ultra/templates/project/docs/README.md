@@ -4,7 +4,7 @@
 
 | 文档 | 回答什么 | 常用锚点 |
 |---|---|---|
-| [requirements/](requirements/README.md) | 每个能力的现行要求（编号、例子、证明方式） | 见目录内各能力规格 |
+| [requirements/](requirements/README.md) | 每个能力的现行要求（编号、例子） | 见目录内各能力规格 |
 | （新建文档后在这里登记） | | |
 
 在研功能的意图卡在 `specs/<feature>/spec.md`，零散的待做事项在 `specs/backlog.md`。
