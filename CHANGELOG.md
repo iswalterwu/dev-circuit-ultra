@@ -9,6 +9,8 @@
 - 要求只写一处：功能的行为要求直接改在 `docs/requirements/<能力>.md`，意图卡只留目标、范围和切片；收尾不再合并规格、改标题。
   `spec_check`（0.5.0）不再读意图卡，去掉 `bad-change`、`conflict`、`unknown-target`、`unknown-code`、`id-exists` 五条规则；
   直接运行脚本时再用 `--ignore-rule` 指定这些规则名会报参数错误。
+  升级前，把进行中的卡里还没合并的"规格变化"写进能力规格：新版不再把卡里新增的编号当成已存在，
+  测试引用它们会报 `dangling-ref`。
 - 独立审核改为按需：用户说"审一下"时才做；命中风险加项或框架级时，提一句可以加审核，由用户定。
   功能循环从五步变为四步；去掉第一次使用时的 reviewer 问答，不再读 `.dev-circuit/reviewer.json`（已有的可以删掉）。
 - SKILL.md 精简到原来的一半左右：每条规则只写一处；新建项目与接入挤到 `setup.md`，框架级的设计步骤挤到 `framework.md`，
