@@ -17,6 +17,9 @@
   只在用到时读。要求编号改为写在测试文件里：Python 测试名不能带 `-`，`spec_check --report` 认不出 `test_DOCK_12`。
 - demo 增加工具调用层边界：hook 在读取之前拦下账本，绝对路径和相对路径都拦。
 - 删除 A/B 评测：`bench/`、README 里的 A/B 结果和对比图、演示视频里的 A/B 片段。
+- 框架级的结构从设计时起直接写进 `docs/architecture.md`（没有就新建并在文档地图登记），收尾不再合并；
+  去掉 `templates/design.md` 和 `specs/<feature>/design.md`。迁移步骤写进卡的切片，风险和待定问题在点头时说清。
+  升级前，把进行中的框架级功能的 `design.md` 里仍然有效的结构和关键决定并入 `docs/architecture.md`，然后删掉它。
 
 ## 0.4.0
 

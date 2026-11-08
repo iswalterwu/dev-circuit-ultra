@@ -17,4 +17,4 @@
   - [ ] <步骤>
 - S3：<标题>
 
-<行为要求直接改在 `docs/requirements/<能力>.md`，框架级的结构写在同目录的 `design.md`，这里不重复。功能做完后删除本卡。>
+<行为要求直接改在 `docs/requirements/<能力>.md`，框架级的结构直接写在 `docs/architecture.md`，这里不重复。功能做完后删除本卡。>

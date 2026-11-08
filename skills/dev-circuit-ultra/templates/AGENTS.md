@@ -10,7 +10,7 @@
 
 | 任务 | 读 |
 |---|---|
-| 做或续做一个功能 | `specs/<feature>/spec.md`（目标、范围、切片；框架级再读同目录的 `design.md`）、受影响的能力规格 + dev-circuit-ultra 技能 |
+| 做或续做一个功能 | `specs/<feature>/spec.md`（目标、范围、切片）、受影响的能力规格 + dev-circuit-ultra 技能 |
 | 查某个能力的现行要求 | `docs/requirements/<能力>.md` |
 | 改某个代码目录 | 该目录的 README |
 | 找零散的待做事项 | `specs/backlog.md` |
@@ -47,7 +47,7 @@
 
 - 功能开发按 dev-circuit-ultra 技能进行。本项目不使用 OpenSpec，也不生成 superpowers 的设计或计划文件。
 - 设计是现行源：设计变更原地覆盖/删除，不写旧版本、被替代内容或备选方案。历史由项目外的私有账本记录，开发 agent 不读账本。
-- 文档只写现在：不写决策编号、日期、批准记录、模型和通道、哈希，也不写旧版本、被替代内容或移植来源。为什么这么做，写进提交说明或 PR；`docs/architecture.md`（第一个框架级功能收尾后才有）里的关键结构决定可以附一句现行理由。
+- 文档只写现在：不写决策编号、日期、批准记录、模型和通道、哈希，也不写旧版本、被替代内容或移植来源。为什么这么做，写进提交说明或 PR；`docs/architecture.md` 里的关键结构决定可以附一句现行理由。
 - 可验证的行为要求只写在 `docs/requirements/` 下的能力规格里；其他文档引用编号，不重复写要求。
 - 不新建 decisions、maintenance、history、handoff、ledger 一类的文件或目录，doc_guard 会拦截。
 - 不搜索、不读取项目外的账本；需要历史时问用户，由 `dev-circuit-ledger` 生成 brief。

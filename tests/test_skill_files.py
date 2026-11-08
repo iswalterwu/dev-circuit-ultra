@@ -33,6 +33,15 @@ def test_review_runs_only_on_request():
     assert "model:" not in reviewer
 
 
+def test_framework_structure_is_written_once():
+    # Structure goes straight into docs/architecture.md; no feature design doc waits to be merged.
+    assert not (SKILL / "templates" / "design.md").exists()
+    texts = [read(name) for name in ("SKILL.md", "framework.md", "reviewer.md", "setup.md")]
+    texts += [path.read_text(encoding="utf-8") for path in (SKILL / "templates").rglob("*.md")]
+    assert [text for text in texts if "design.md" in text] == []
+    assert "docs/architecture.md" in read("framework.md")
+
+
 def test_scaffold_ignores_caches_and_does_not_promise_architecture():
     assert "__pycache__/" in read("templates/project/.gitignore")
     docs_map = read("templates/project/docs/README.md")

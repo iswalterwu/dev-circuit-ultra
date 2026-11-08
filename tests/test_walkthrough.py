@@ -39,7 +39,7 @@ def test_walkthrough_normal_and_framework(tmp_path):
 - DEMO-3：导出后弹出旧版提示。
 """)
 
-    # Design approved: requirements change in place; the cards only hold goal, scope and slices.
+    # Design approved: requirements and structure change in place; the cards only hold goal, scope and slices.
     write(root, "docs/requirements/demo.md", """# 导出能力
 代号：DEMO
 
@@ -81,40 +81,21 @@ def test_walkthrough_normal_and_framework(tmp_path):
 
 ## 切片
 - S1：打通入口到内存仓库的骨架路径。
-  - [ ] 验证契约，把结构决定并入 docs/architecture.md。
+  - [ ] 打通入口 → 同步服务 → 仓库写入 → 读回，补契约测试。
 """)
-    design = write(root, "specs/new-sync/design.md", """# new-sync 设计
+    # The framework structure is written once, straight into docs/architecture.md; no feature design doc.
+    architecture = write(root, "docs/architecture.md", """# 结构
 
-## 现状与约束
-当前只有导出模块；同步在同一进程内运行，不引入外部依赖。
+入口 → 同步服务 → 内存仓库；依赖只能单向。
+记录由内存仓库拥有，只有仓库写入。由仓库统一写入的理由：保持单一数据归属。
+sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调用无远程超时，接口版本为 v1。
+相关行为要求见 [同步能力](requirements/sync.md) 的 SYNC-1；导出行为见 [导出能力](requirements/demo.md) 的 DEMO-1、DEMO-2。
+""")
+    write(root, "docs/README.md", """# 文档地图
 
-## 设计目标与非目标
-- 目标：明确记录的唯一写入者。
-- 非目标：分布式同步。
-
-## 结构
-- 模块与职责：入口接收调用，同步服务编排，内存仓库存取记录。
-- 依赖方向：入口 → 同步服务 → 内存仓库。
-- 数据归属：记录由内存仓库拥有，只有仓库写入。
-- 组件契约：sync(records) 返回写入数量；非法记录抛 ValueError；本地同步调用无远程超时；接口版本为 v1。
-
-## 关键决定（只写现行）
-- 决定：由内存仓库统一写入。理由：保持单一数据归属。
-
-## 风险与缓解
-- 写入过程中部分失败 → 校验全部记录后一次替换。
-
-## 迁移与回滚
-新增本地接口不改已有数据；失败时撤回入口与同步模块，继续使用原有导出功能。
-
-## 骨架切片
-调用入口 → 同步服务 → 仓库写入 → 读回；优先验证跨模块数据归属与参数传递。
-
-## 结构守护
-契约测试验证入口只调用同步服务，数据只由仓库写入。
-
-## 可以晚点再答的问题
-- 是否支持批量取消，后续有需求再决定。
+- [导出能力](requirements/demo.md)：DEMO 要求。
+- [同步能力](requirements/sync.md)：SYNC 要求。
+- [结构](architecture.md)：模块、契约与数据归属。
 """)
     write(root, "src/test_demo.py", 'REQUIREMENT_IDS = ("DEMO-1", "DEMO-2", "SYNC-1")\n')
 
@@ -131,25 +112,13 @@ def test_walkthrough_normal_and_framework(tmp_path):
     assert "[dangling-ref]" in result.stdout and "DEMO-3" in result.stdout
     stale.unlink()
 
-    # Last slice: the framework design's lasting decisions move into docs/architecture.md.
-    architecture = write(root, "docs/architecture.md", """# 结构
-
-入口 → 同步服务 → 内存仓库；依赖只能单向。
-记录由内存仓库拥有，只有仓库写入。由仓库统一写入的理由：保持单一数据归属。
-sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调用无远程超时，接口版本为 v1。
-相关行为要求见 [同步能力](requirements/sync.md) 的 SYNC-1；导出行为见 [导出能力](requirements/demo.md) 的 DEMO-1、DEMO-2。
-""")
-    write(root, "docs/README.md", """# 文档地图
-
-- [导出能力](requirements/demo.md)：DEMO 要求。
-- [同步能力](requirements/sync.md)：SYNC 要求。
-- [结构](architecture.md)：模块、契约与数据归属。
-""")
+    # Last slice: requirements and structure are already current, so there is nothing to merge.
     for card in (ordinary, framework):
         card.write_text(card.read_text(encoding="utf-8").replace("[ ]", "[x]"), encoding="utf-8")
 
     assert "- SYNC-1：同步成功后可读回相同的记录。" in sync.read_text(encoding="utf-8")
     assert "保持单一数据归属" in architecture.read_text(encoding="utf-8")
+    assert not list((root / "specs").glob("*/design.md"))
     for script in ("doc_guard.py", "spec_check.py"):
         result = check(root, script)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -160,13 +129,13 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
     assert git(root, "config", "core.hooksPath").stdout.strip() == ".githooks"
     assert git(root, "add", "-A").returncode == 0
     result = git(root, "commit", "-m", "test: finish add-export and new-sync",
-                 "-m", "为什么：验证卡和设计仍在时，最后一个切片可通过两项 hook 检查。")
+                 "-m", "为什么：验证卡仍在时，最后一个切片可通过两项 hook 检查。")
     assert result.returncode == 0, result.stdout + result.stderr
     last_slice = git(root, "rev-parse", "HEAD").stdout.strip()
     assert git(root, "status", "--short").stdout.strip() == ""
 
-    # Close: nothing to merge; delete the cards and the feature design.
-    for path in (ordinary, framework, design):
+    # Close: nothing to merge; delete the cards.
+    for path in (ordinary, framework):
         path.unlink()
     ordinary.parent.rmdir()
     framework.parent.rmdir()
@@ -176,7 +145,7 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
         assert result.returncode == 0, result.stdout + result.stderr
     assert git(root, "add", "-A").returncode == 0
     result = git(root, "commit", "-m", "test: close add-export and new-sync",
-                 "-m", "为什么：验收后单独删除卡和设计，两项 hook 检查仍然通过。")
+                 "-m", "为什么：验收后只删除卡，两项 hook 检查仍然通过。")
     assert result.returncode == 0, result.stdout + result.stderr
     assert git(root, "rev-parse", "HEAD^").stdout.strip() == last_slice
     assert git(root, "status", "--short").stdout.strip() == ""

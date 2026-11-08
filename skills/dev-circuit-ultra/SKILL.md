@@ -25,7 +25,7 @@ metadata:
 
 1. 读项目 `AGENTS.md`，按它的路由只读当前任务需要的设计、代码和受影响的能力规格。项目里已经回答了的，不再问用户。
 2. 选路线，用一行告诉用户；用户可以推翻。
-3. 接手进行中的功能：读 `specs/<feature>/spec.md` 的切片（框架级再读同目录的 `design.md`）和 `git log`，从第一个没勾的步骤继续。
+3. 接手进行中的功能：读 `specs/<feature>/spec.md` 的切片和 `git log`，从第一个没勾的步骤继续。
 4. 新建项目、给项目接入本流程或建账本：读本技能目录的 `setup.md`。
 
 | 路线 | 适用 | 做什么 |
@@ -67,7 +67,7 @@ metadata:
 
 - 请用户验收前确认：本切片涉及的每条要求都有通过的测试或写明的演示步骤；能力规格和 docs 与实现一致；③ 里的全量检查已通过。
 - 验收说明写三行：改了什么、怎么看（命令 / 页面 / 步骤）、风险。界面切片逐个验收；非界面功能在功能结束时一起验收。
-- 能力规格从点头起就是现行的，收尾不用合并；框架级按 `framework.md` 把结构决定并入 `docs/architecture.md`。
+- 能力规格和 `docs/architecture.md` 从点头起就是现行的，收尾不用合并。
 - 用户确认后合并，分支约定见 AGENTS.md。功能做完后，剩下的事项一行一条写进 `specs/backlog.md`，删除 `specs/<feature>/`，提交说明写 `close <feature>`。
 
 ### 按需：独立审核
@@ -75,7 +75,7 @@ metadata:
 只在用户要求时做（"审一下这个切片""审一下这个设计"），包括用户接受了风险加项或框架级点头时提的审核。
 
 - 派一个独立上下文的只读子 agent，用户点名了 agent 就用它；宿主不支持子 agent 时，请用户新开会话审。不在同一个上下文里自审，也不让实现 worker 冒充 reviewer。
-- 只交给它：`reviewer.md`、`specs/<feature>/spec.md`（框架级加 `design.md`）、基线 `<base>`、`git diff <base>...HEAD`。
+- 只交给它：`reviewer.md`、`specs/<feature>/spec.md`、基线 `<base>`、`git diff <base>...HEAD`。
 - "必须改"修好后，只把修复 diff 交回同一个 reviewer 复查，最多一次；仍有分歧，给用户两个选项。"建议"顺手能做的当场做，其余丢掉或一行写进 `specs/backlog.md`。
 
 ## 3. 谁决定什么
@@ -89,7 +89,7 @@ metadata:
 |---|---|
 | 目标、范围、切片进度 | `specs/<feature>/spec.md`，功能做完就删 |
 | 现行的、可验证的行为要求 | `docs/requirements/<能力>.md`（能力规格），在研功能也直接改这里 |
-| 现行的结构与关键决定 | `docs/architecture.md`；框架级在研时先写在 `specs/<feature>/design.md` |
+| 现行的结构与关键决定 | `docs/architecture.md`，在研的框架级功能也直接改这里 |
 | 产品语义、交互与设计说明 | `docs/` 下其他文档，引用要求编号，不重复写要求 |
 | 做没做对 | 测试和 CI；界面类再加演示步骤 |
 | 为什么、历史、被否方案 | 项目外的私有账本 |
