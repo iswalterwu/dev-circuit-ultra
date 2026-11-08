@@ -11,8 +11,13 @@ def read(relative: str) -> str:
     return (SKILL / relative).read_text(encoding="utf-8")
 
 
-def test_every_template_the_skill_names_exists():
-    text = read("SKILL.md") + read("reviewer.md") + read("templates/AGENTS.md")
+def test_every_file_the_skill_names_exists():
+    skill = read("SKILL.md")
+    for name in ("setup.md", "framework.md", "reviewer.md"):
+        assert f"`{name}`" in skill and (SKILL / name).is_file()
+
+    text = skill + "".join(read(name) for name in (
+        "setup.md", "framework.md", "reviewer.md", "templates/AGENTS.md"))
     named = set(re.findall(r"templates/[\w./-]+\.md", text))
 
     assert named
