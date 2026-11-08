@@ -1,7 +1,8 @@
-"""doc_guard v0.2.0
+"""doc_guard v0.3.0
 
 用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径和断链。
 用法：python doc_guard.py [--root DIR] [--json] [--ignore GLOB]... [--ignore-rule RULE]...
+输出：每个问题一行；没有问题时打印一行"通过"和检查了多少份文档。--list-rules 列出每条规则查什么。
 退出码：0 无问题；1 有问题；2 根目录不存在或参数错误。
 本文件来自 dev-circuit-ultra 仓库，项目里不要修改，升级时整体覆盖。
 
@@ -26,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -75,6 +76,20 @@ LONG_HASH = re.compile(r"\b[0-9a-f]{32,64}\b")
 SHORT_HASH = re.compile(r"(?<![#\w-])[0-9a-f]{7,12}(?![\w-])")
 INLINE_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+# What --list-rules prints, built from the constants above so it cannot drift from them.
+RULE_HELP = {
+    "forbidden-path": "项目里出现这些目录或文件：" + "、".join(sorted(FORBIDDEN_DIRS))
+                      + "、docs/ 或 specs/ 下名为 history 的目录、根目录的 HANDOFF*.md、specs/<功能>/ 下的 "
+                      + "、".join(sorted(FORBIDDEN_SPEC_FILES)),
+    "bookkeeping-phrase": "文档里出现过程记录短语（按子串匹配）：" + "、".join(BOOKKEEPING_PHRASES),
+    "decision-id": "文档里出现决策编号：D- 加三位数字或 ADR- 加数字，如 D-036、ADR-12",
+    "long-hash": "文档里出现 32–64 位小写十六进制串",
+    "short-hash": "文档里出现 7–12 位、同时含数字和字母的小写十六进制串（像提交号）",
+    "broken-link": "Markdown 链接的相对路径指向不存在的文件（不查 http(s)、mailto、# 锚点和绝对路径）",
+}
+SCOPE = ("范围：根目录和 docs/、specs/、design/ 下的 .md，第二、三层目录里的 README.md，以及 --include 指定的 .md；"
+         "代码围栏里的内容和 doc-guard:ignore / off 标出的行不查。")
 
 SUPPRESS_LINE = re.compile(r"doc-guard:\s*ignore", re.IGNORECASE)
 SUPPRESS_OFF = re.compile(r"doc-guard:\s*off", re.IGNORECASE)
@@ -255,6 +270,12 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
     `use_ignore_file` is true and a `.dcuignore` exists under `root` (or at
     `ignore_file`), its patterns are added.
     """
+    return _scan(root, ignores, ignored_rules, ignore_file, use_ignore_file, includes)[0]
+
+
+def _scan(root: Path, ignores, ignored_rules, ignore_file, use_ignore_file: bool,
+          includes) -> tuple[list[Finding], int]:
+    """Like scan(), and also return how many documents were checked."""
     root = Path(root)
     patterns = list(ignores)
     if use_ignore_file:
@@ -270,7 +291,8 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
     ignored = set(ignored_rules)
     if ignored:
         findings = [finding for finding in findings if finding.rule not in ignored]
-    return sorted(findings, key=lambda item: (item.path, item.line, item.rule, item.message))
+    ordered = sorted(findings, key=lambda item: (item.path, item.line, item.rule, item.message))
+    return ordered, len(documents)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"read extra globs from this file (default: <root>/{IGNORE_FILE})")
     parser.add_argument("--no-ignore-file", action="store_true",
                         help=f"do not read {IGNORE_FILE}")
-    parser.add_argument("--list-rules", action="store_true", help="print rule names and exit")
+    parser.add_argument("--list-rules", action="store_true", help="print each rule and what it checks, then exit")
     parser.add_argument("--version", action="version", version=f"doc_guard {VERSION}")
     try:
         args = parser.parse_args(argv)
@@ -297,7 +319,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_rules:
         for rule in RULES:
-            print(rule)
+            print(f"{rule:<20}{RULE_HELP[rule]}")
+        print(SCOPE)
         return 0
     if not args.root.is_dir():
         return 2
@@ -305,13 +328,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--ignore-file 指向的文件不存在：{args.ignore_file}", file=sys.stderr)
         return 2
 
-    findings = scan(args.root, args.ignore, args.ignore_rule, args.ignore_file,
-                    not args.no_ignore_file, args.include)
+    findings, documents = _scan(args.root, args.ignore, args.ignore_rule, args.ignore_file,
+                                not args.no_ignore_file, args.include)
     if args.json:
         print(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False))
-    else:
+    elif findings:
         for finding in findings:
             print(f"{finding.path}:{finding.line}: [{finding.rule}] {finding.message}")
+    else:
+        print(f"doc_guard：通过（检查了 {documents} 份文档）")
     return 1 if findings else 0
 
 

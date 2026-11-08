@@ -117,7 +117,9 @@ def _rules() -> int:
         except RuntimeError as error:
             print(error, file=sys.stderr)
             return 2
-        print(f"{label}: {' '.join(module.RULES)}", file=out)
+        print(f"{label}:", file=out)
+        for rule in module.RULES:
+            print(f"  {rule:<20}{module.RULE_HELP[rule]}", file=out)
     return 0
 
 
@@ -265,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="要求编号检查（重复、悬空引用、在研卡冲突）")
     sub.add_parser("check", add_help=False,
                    help="依次跑 doc-guard 和 spec-check（共用的忽略参数自动分发；要看 JSON 用子命令）")
-    sub.add_parser("rules", add_help=False, help="列出两个检查器的规则名")
+    sub.add_parser("rules", add_help=False, help="列出两个检查器的规则和各自查什么")
     vendor = sub.add_parser("vendor", help="把两个检查器拷进项目的 scripts/，已有则升级")
     vendor.add_argument("--project", default=".", help="项目目录（默认当前目录）")
 

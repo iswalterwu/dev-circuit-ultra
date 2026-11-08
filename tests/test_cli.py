@@ -24,6 +24,7 @@ def test_doc_guard_passthrough(tmp_path: Path, capsys) -> None:
     assert cli.main(["doc-guard", "--root", str(tmp_path)]) == 1
     assert "[decision-id]" in capsys.readouterr().out
     assert cli.main(["doc-guard", "--root", str(tmp_path), "--ignore-rule", "decision-id"]) == 0
+    assert capsys.readouterr().out.startswith("doc_guard：通过")
     assert cli.main(["doc-guard", "--root", str(tmp_path), "--json"]) == 1
     assert json.loads(capsys.readouterr().out)[0]["rule"] == "decision-id"
 
@@ -57,6 +58,7 @@ def test_rules(capsys) -> None:
     assert cli.main(["rules"]) == 0
     out = capsys.readouterr().out
     assert "forbidden-path" in out and "dangling-ref" in out
+    assert "D-036" in out  # each rule comes with what it checks
 
 
 def test_hooks_install_pi(tmp_path: Path, capsys) -> None:

@@ -75,7 +75,8 @@ def test_cli_outputs_utf8_with_legacy_stdio_encoding(tmp_path, args):
     if "--json" in args:
         assert json.loads(output)[0]["rule"] == "dangling-ref"
     if "--report" in args:
-        assert result.stderr.decode("utf-8").splitlines() == ["未被测试引用：DEMO-1"]
+        assert result.stderr.decode("utf-8").splitlines() == [
+            "1 条要求：0 条有测试引用，0 条靠演示，1 条既没有测试也没有演示", "未被测试引用：DEMO-1"]
 
 
 def test_dangling_ref(tmp_path):
@@ -125,13 +126,23 @@ def test_report_and_cli(tmp_path, capsys):
     write(tmp_path, "src/demo.py", "# DEMO-2\n")
     expected = ["未被测试引用：DEMO-2", "演示要求：DEMO-3"]
     assert report(tmp_path) == expected
+    assert main(["--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "spec_check：通过（1 份能力规格，3 条要求）\n"
+    header = "3 条要求：1 条有测试引用，1 条靠演示，1 条既没有测试也没有演示"
     assert main(["--root", str(tmp_path), "--report"]) == 0
-    assert capsys.readouterr().out.splitlines() == expected
+    assert capsys.readouterr().out.splitlines() == [
+        "spec_check：通过（1 份能力规格，3 条要求）", header, *expected]
 
     assert main(["--root", str(tmp_path), "--json", "--report"]) == 0
     output = capsys.readouterr()
     assert json.loads(output.out) == []
-    assert output.err.splitlines() == expected
+    assert output.err.splitlines() == [header, *expected]
+
+    # A demonstrated requirement that also has a test counts once, as tested.
+    more = write(tmp_path, "tests/test_more.py", "# DEMO-3\n")
+    assert main(["--root", str(tmp_path), "--report"]) == 0
+    assert "3 条要求：2 条有测试引用，0 条靠演示，1 条既没有测试也没有演示" in capsys.readouterr().out
+    more.unlink()
 
     for name in ("test_demo.py", "demo_test.go", "demo.test.ts", "demo.spec.js",
                  "DemoTest.java", "DemoTests.cs", "DemoSpec.kt"):
@@ -142,7 +153,7 @@ def test_report_and_cli(tmp_path, capsys):
     write(tmp_path, "src/x.py", "# DEMO-99\n")
     assert main(["--root", str(tmp_path), "--report"]) == 1
     output = capsys.readouterr().out
-    assert "[dangling-ref]" in output
+    assert "[dangling-ref]" in output and "通过" not in output
     assert "未被测试引用：DEMO-2" in output
     assert main(["--root", str(tmp_path), "--json"]) == 1
     items = json.loads(capsys.readouterr().out)
@@ -197,7 +208,10 @@ def test_ignore_file_is_shared_with_doc_guard(tmp_path):
 
 def test_list_rules_and_version(capsys):
     assert main(["--list-rules"]) == 0
-    assert "dangling-ref" in capsys.readouterr().out
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines[:len(spec_check.RULES)]] == list(spec_check.RULES)
+    assert all(len(line.split(maxsplit=1)) == 2 for line in lines[:len(spec_check.RULES)])
+    assert lines[-1].startswith("范围：")
     assert main(["--version"]) == 0
     assert "spec_check" in capsys.readouterr().out
 

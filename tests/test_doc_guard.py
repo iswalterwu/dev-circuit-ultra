@@ -147,7 +147,9 @@ def test_cli(tmp_path: Path, capsys) -> None:
     clean.mkdir()
     write(clean, "AGENTS.md", "Current rules\n")
     assert main(["--root", str(clean)]) == 0
-    assert capsys.readouterr().out == ""
+    assert capsys.readouterr().out == "doc_guard：通过（检查了 1 份文档）\n"
+    assert main(["--root", str(clean), "--json"]) == 0
+    assert capsys.readouterr().out == "[]\n"
 
     bad = tmp_path / "bad"
     write(bad, "docs/a.md", "见 D-036\n")
@@ -246,8 +248,12 @@ def test_code_fences_are_not_document_claims(tmp_path: Path) -> None:
 
 
 def test_list_rules_and_version(capsys) -> None:
+    # Each rule comes with one line on what it checks, so nobody has to read this file to learn it.
     assert main(["--list-rules"]) == 0
-    assert "forbidden-path" in capsys.readouterr().out
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines[:len(doc_guard.RULES)]] == list(doc_guard.RULES)
+    assert all(len(line.split(maxsplit=1)) == 2 for line in lines[:len(doc_guard.RULES)])
+    assert lines[-1].startswith("范围：")
     assert main(["--version"]) == 0
     assert "doc_guard" in capsys.readouterr().out
 

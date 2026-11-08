@@ -3,8 +3,9 @@
 用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段。
 在研功能的卡（specs/）不参与检查：要求直接写在能力规格里。
 用法：python spec_check.py [--root DIR] [--json] [--report] [--ignore GLOB]... [--ignore-rule RULE]...
+输出：每个问题一行；没有问题时打印一行"通过"和能力规格、要求的数量。--list-rules 列出每条规则查什么。
 退出码：0 无错误；1 有错误；2 根目录不存在或参数错误。
---report 列出未被测试引用和标为演示的要求，不影响退出码。
+--report 先给出要求总数和有测试、靠演示、都没有的各几条，再列出未被测试引用和标为演示的要求，不影响退出码。
 测试引用按 test/tests/__tests__ 目录或常见测试文件名识别；普通源码不算证明。
 --json --report 将报告写到标准错误，标准输出保持 JSON 数组。
 本文件来自 dev-circuit-ultra 仓库，项目里不要修改，升级时整体覆盖。
@@ -23,6 +24,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 
 VERSION = "0.5.0"
@@ -52,6 +54,18 @@ HEADER = re.compile(r"^(?i:代号|code|capability)\s*[：:]\s*([A-Z]{2,8})\s*$")
 DEFINITION = re.compile(BULLET + r"(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*[：:]\s*")
 TABLE_DEFINITION = re.compile(r"^\|\s*(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*\|")
 DEMONSTRATION = re.compile(r"^\s+- (?:证明[：:].*演示|demonstrated by[：:])")
+
+# What --list-rules prints; the scope is built from the constants above so it cannot drift from them.
+RULE_HELP = {
+    "bad-header": "能力规格没有恰好一行文件头“代号：<CODE>”（CODE 为 2–8 个大写字母，也认 Code: / capability:），"
+                  "代号在别的能力规格里已用过，或要求编号的前缀和本文件代号不符",
+    "dup-id": "同一个要求编号定义了不止一次（跨文件也算）",
+    "dangling-ref": "代码或测试里引用的要求编号（前缀是已声明的代号），在能力规格里不存在",
+}
+SCOPE = ("范围：docs/requirements/ 下除 README.md 外的 .md；引用在这些后缀的文件里找："
+         + " ".join(sorted(CODE_EXTENSIONS))
+         + "。--report 只把测试文件里的引用算作有测试：test/、tests/、__tests__/ 下的文件，"
+           "或文件名形如 test_*、*_test、*.test.*、*.spec.*、*Test、*Tests、*Spec。")
 
 
 @dataclass(frozen=True)
@@ -113,18 +127,20 @@ def _ignores(root: Path, ignores, ignore_file, use_ignore_file: bool) -> list[st
     return patterns
 
 
+def _capability_files(root: Path, patterns=()):
+    for path in sorted((root / "docs" / "requirements").glob("*.md")):
+        if path.name != "README.md" and not path_is_ignored(path.relative_to(root).as_posix(), patterns):
+            yield path
+
+
 def _requirements(root: Path, patterns=()):
     findings: list[Finding] = []
     codes: dict[str, str] = {}
     requirements: dict[str, _Requirement] = {}
     legacy: set[str] = set()
     demonstrations: set[str] = set()
-    for path in sorted((root / "docs" / "requirements").glob("*.md")):
-        if path.name == "README.md":
-            continue
+    for path in _capability_files(root, patterns):
         relative = path.relative_to(root).as_posix()
-        if path_is_ignored(relative, patterns):
-            continue
         lines = path.read_text(encoding="utf-8-sig").splitlines()
         headers = [(number, line) for number, line in enumerate(lines, 1)
                    if HEADER_PREFIX.match(line)]
@@ -209,7 +225,11 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
          use_ignore_file: bool = True) -> list[Finding]:
     """Check declared IDs and the references in source files."""
     root = Path(root)
-    patterns = _ignores(root, ignores, ignore_file, use_ignore_file)
+    return _scan(root, _ignores(root, ignores, ignore_file, use_ignore_file), ignored_rules)[0]
+
+
+def _scan(root: Path, patterns, ignored_rules=()) -> tuple[list[Finding], int]:
+    """Like scan(), and also return how many requirements are defined."""
     findings, codes, requirements, legacy, _ = _requirements(root, patterns)
     for path, number, identifier in _references(root, codes, patterns):
         if identifier in requirements or identifier in legacy:
@@ -219,22 +239,50 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
     ignored = set(ignored_rules)
     if ignored:
         findings = [finding for finding in findings if finding.rule not in ignored]
-    return sorted(findings, key=lambda item: (item.path, item.line, item.rule, item.message))
+    ordered = sorted(findings, key=lambda item: (item.path, item.line, item.rule, item.message))
+    return ordered, len(requirements) + len(legacy)
+
+
+class _Coverage(NamedTuple):
+    requirements: list[str]
+    tested: set[str]
+    demonstrations: set[str]
+    legacy: int
+
+
+def _coverage(root: Path, patterns) -> _Coverage:
+    _, codes, requirements, legacy, demonstrations = _requirements(root, patterns)
+    tested = {identifier for path, _, identifier in _references(root, codes, patterns) if _is_test(path)}
+    return _Coverage(sorted(requirements), tested, demonstrations, len(legacy))
 
 
 def report(root: Path, ignores=(), ignore_file=None, use_ignore_file: bool = True) -> list[str]:
     """Report test coverage and demonstration IDs without enforcing coverage."""
     root = Path(root)
-    patterns = _ignores(root, ignores, ignore_file, use_ignore_file)
-    _, codes, requirements, _, demonstrations = _requirements(root, patterns)
-    tested = {identifier for path, _, identifier in _references(root, codes, patterns) if _is_test(path)}
+    return _report_lines(_coverage(root, _ignores(root, ignores, ignore_file, use_ignore_file)))
+
+
+def _report_lines(coverage: _Coverage) -> list[str]:
     lines: list[str] = []
-    for identifier in sorted(requirements):
-        if identifier not in tested and identifier not in demonstrations:
+    for identifier in coverage.requirements:
+        if identifier not in coverage.tested and identifier not in coverage.demonstrations:
             lines.append(f"未被测试引用：{identifier}")
-        if identifier in demonstrations:
+        if identifier in coverage.demonstrations:
             lines.append(f"演示要求：{identifier}")
     return lines
+
+
+def _report_header(coverage: _Coverage) -> str:
+    # The three counts partition the total: a tested requirement does not also count as demonstrated.
+    ids = coverage.requirements
+    tested = sum(identifier in coverage.tested for identifier in ids)
+    shown = sum(identifier in coverage.demonstrations and identifier not in coverage.tested
+                for identifier in ids)
+    neither = len(ids) - tested - shown
+    header = f"{len(ids)} 条要求：{tested} 条有测试引用，{shown} 条靠演示，{neither} 条既没有测试也没有演示"
+    if coverage.legacy:
+        header += f"；另有 {coverage.legacy} 条旧编号（AC-xxx-y）不在统计内"
+    return header
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -252,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"read extra globs from this file (default: <root>/{IGNORE_FILE})")
     parser.add_argument("--no-ignore-file", action="store_true",
                         help=f"do not read {IGNORE_FILE}")
-    parser.add_argument("--list-rules", action="store_true", help="print rule names and exit")
+    parser.add_argument("--list-rules", action="store_true", help="print each rule and what it checks, then exit")
     parser.add_argument("--version", action="version", version=f"spec_check {VERSION}")
     try:
         args = parser.parse_args(argv)
@@ -261,22 +309,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_rules:
         for rule in RULES:
-            print(rule)
+            print(f"{rule:<14}{RULE_HELP[rule]}")
+        print(SCOPE)
         return 0
     if not args.root.is_dir():
         return 2
     if args.ignore_file is not None and not args.ignore_file.is_file():
         print(f"--ignore-file 指向的文件不存在：{args.ignore_file}", file=sys.stderr)
         return 2
-    findings = scan(args.root, args.ignore, args.ignore_rule, args.ignore_file,
-                    not args.no_ignore_file)
+    patterns = _ignores(args.root, args.ignore, args.ignore_file, not args.no_ignore_file)
+    findings, defined = _scan(args.root, patterns, args.ignore_rule)
     if args.json:
         print(json.dumps([asdict(finding) for finding in findings], ensure_ascii=False))
-    else:
+    elif findings:
         for finding in findings:
             print(f"{finding.path}:{finding.line}: [{finding.rule}] {finding.message}")
+    else:
+        files = sum(1 for _ in _capability_files(args.root, patterns))
+        print(f"spec_check：通过（{files} 份能力规格，{defined} 条要求）")
     if args.report:
-        for line in report(args.root, args.ignore, args.ignore_file, not args.no_ignore_file):
+        coverage = _coverage(args.root, patterns)
+        for line in [_report_header(coverage), *_report_lines(coverage)]:
             print(line, file=sys.stderr if args.json else sys.stdout)
     return 1 if findings else 0
 

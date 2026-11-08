@@ -120,7 +120,8 @@ sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调�
         assert result.returncode == 0, result.stdout + result.stderr
     result = check(root, "spec_check.py", "--report")
     assert result.returncode == 0
-    assert result.stdout == ""
+    assert "3 条要求：3 条有测试引用，0 条靠演示，0 条既没有测试也没有演示" in result.stdout
+    assert "未被测试引用" not in result.stdout
 
     assert git(root, "config", "core.hooksPath").stdout.strip() == ".githooks"
     assert git(root, "add", "-A").returncode == 0
