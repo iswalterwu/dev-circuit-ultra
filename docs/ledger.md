@@ -2,7 +2,7 @@
 
 dev-circuit-ultra 把“现在怎么做”和“为什么变成现在这样”分开：
 
-- **现行设计**：项目里的 `specs/<feature>/spec.md` 的 `## 设计`，框架级再加 `design.md`。开发 agent 只读这个。
+- **现行设计**：项目里的能力规格（`docs/requirements/`）和其他 docs，在研的框架级功能再加 `specs/<feature>/design.md`。开发 agent 只读这些。
 - **账本**：项目外的私有 git repo。只记决策、被否方案、废弃思路和原因；只给 human 和 `dev-circuit-archivist` 用。
 
 现行设计是 **read model**；账本是 **event log**。设计变更时，开发 agent 原地覆盖/删除旧内容；archivist 把旧决定和被否方案追加到账本。开发 agent 不读 event log。
@@ -59,10 +59,10 @@ hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不�
 ## 流程
 
 1. **设计澄清**：开发 agent 问设计问题，human 选方案；设计只写选中的方案。
-2. **点头**：现行设计和意图卡确认。
+2. **点头**：确认意图卡和能力规格里的要求改动。
 3. **切片**：实现/测试范围从设计推导；设计变了先改设计，再改代码/测试。
 4. **审核**：审核子 agent 只看现行设计、diff、基线；不读账本。
-5. **收尾**：合并现行设计/规格，删除卡和 feature design；archivist 在项目外记录最终状态。
+5. **收尾**：能力规格已经是现行的，不用合并；框架级把 feature design 里仍然有效的结构决定并入 `docs/architecture.md`，然后删除卡和 feature design；archivist 在项目外记录最终状态。
 6. **回溯**：human 用 `dev-circuit-ledger` 查账本；需要给开发 agent 时，只给最小 brief。
 
 ## 授权
