@@ -76,16 +76,6 @@ TEXT = {
             "dev agent: read project       archivist: write ledger",
             "human: the only bridge between them",
         ],
-        "ab": [
-            "$ A/B: one open brief, two loops",
-            "",
-            "rubric  27/30   vs 26/30",
-            "cost    $0.074  vs $0.106",
-            "time    409s    vs 421s",
-            "clean   0       vs 11 uncommitted",
-            "",
-            "n=1; blind artifact review",
-        ],
         "close": [
             "$ python scripts/doc_guard.py",
             "OK",
@@ -147,16 +137,6 @@ TEXT = {
             "",
             "开发 agent：只读项目          archivist：只写账本",
             "human：唯一的桥",
-        ],
-        "ab": [
-            "$ A/B: one open brief, two loops",
-            "",
-            "评分    27/30   vs 26/30",
-            "成本    $0.074  vs $0.106",
-            "耗时    409s    vs 421s",
-            "收尾    干净    vs 11 条未提交",
-            "",
-            "n=1；盲评最终交付物",
         ],
         "close": [
             "$ python scripts/doc_guard.py",
@@ -274,10 +254,9 @@ def render(lang: str, out: Path) -> None:
         (4, 10, lambda t: terminal_frame(lang, "problem", [(0.2, line) for line in TEXT[lang]["problem"]], t, 0)),
         (10, 18, lambda t: terminal_frame(lang, "the loop", [(0.2 + i * 0.35, line) for i, line in enumerate(TEXT[lang]["loop"])], t, min(4, int((t - 10) / 1.6)))),
         (18, 30, lambda t: terminal_frame(lang, "deterministic demo", [(0.2 + i * 0.7, line) for i, line in enumerate(TEXT[lang]["demo"])], t, 1)),
-        (30, 42, lambda t: terminal_frame(lang, "one boundary", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["boundary"])], t, 3)),
-        (42, 50, lambda t: terminal_frame(lang, "A/B", [(0.2 + i * 0.45, line) for i, line in enumerate(TEXT[lang]["ab"])], t, 4)),
-        (50, 55, lambda t: terminal_frame(lang, "closeout", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["close"])], t, 4)),
-        (55, 60, lambda t: terminal_frame(lang, "ship", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["cta"])], t, 4)),
+        (30, 44, lambda t: terminal_frame(lang, "one boundary", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["boundary"])], t, 3)),
+        (44, 52, lambda t: terminal_frame(lang, "closeout", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["close"])], t, 4)),
+        (52, 60, lambda t: terminal_frame(lang, "ship", [(0.2 + i * 0.55, line) for i, line in enumerate(TEXT[lang]["cta"])], t, 4)),
     ]
 
     out.parent.mkdir(parents=True, exist_ok=True)

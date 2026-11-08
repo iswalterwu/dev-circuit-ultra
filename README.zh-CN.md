@@ -103,7 +103,7 @@ dsh plugin --profile web add dev-circuit-ultra
 
 <p align="center"><a href="assets/demo-60s-zh.webm"><img src="assets/demo-60s-poster-zh.png" alt="观看 60 秒演示" width="100%"></a></p>
 
-<p align="center"><em>60 秒演示：五步循环 + 与 OpenSpec 的开放 A/B（WebM，无配音）。</em></p>
+<p align="center"><em>60 秒演示：五步循环和账本边界（WebM，无配音）。</em></p>
 
 ```powershell
 python demo/run_demo.py

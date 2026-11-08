@@ -103,7 +103,7 @@ Or publish the individual `skills/<name>/` folders to the Skill Store through Sk
 
 <p align="center"><a href="assets/demo-60s-en.webm"><img src="assets/demo-60s-poster-en.png" alt="Watch the 60-second walkthrough" width="100%"></a></p>
 
-<p align="center"><em>60-second walkthrough: the five steps plus the open-ended OpenSpec A/B (WebM, no audio).</em></p>
+<p align="center"><em>60-second walkthrough: the five-step loop and the ledger boundary (WebM, no audio).</em></p>
 
 ```powershell
 python demo/run_demo.py
