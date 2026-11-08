@@ -19,6 +19,15 @@ def test_every_template_the_skill_names_exists():
     assert sorted(name for name in named if not (SKILL / name).is_file()) == []
 
 
+def test_review_runs_only_on_request():
+    skill = read("SKILL.md")
+    reviewer = read("reviewer.md")
+
+    assert "只在用户要求时做" in skill
+    assert "reviewer.json" not in skill + reviewer
+    assert "model:" not in reviewer
+
+
 def test_scaffold_ignores_caches_and_does_not_promise_architecture():
     assert "__pycache__/" in read("templates/project/.gitignore")
     docs_map = read("templates/project/docs/README.md")

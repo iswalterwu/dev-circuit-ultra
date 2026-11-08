@@ -9,6 +9,8 @@
 - 要求只写一处：功能的行为要求直接改在 `docs/requirements/<能力>.md`，意图卡只留目标、范围和切片；收尾不再合并规格、改标题。
   `spec_check`（0.5.0）不再读意图卡，去掉 `bad-change`、`conflict`、`unknown-target`、`unknown-code`、`id-exists` 五条规则；
   直接运行脚本时再用 `--ignore-rule` 指定这些规则名会报参数错误。
+- 独立审核改为按需：用户说"审一下"时才做；命中风险加项或框架级时，提一句可以加审核，由用户定。
+  功能循环从五步变为四步；去掉第一次使用时的 reviewer 问答，不再读 `.dev-circuit/reviewer.json`（已有的可以删掉）。
 - demo 增加工具调用层边界：hook 在读取之前拦下账本，绝对路径和相对路径都拦。
 - 删除 A/B 评测：`bench/`、README 里的 A/B 结果和对比图、演示视频里的 A/B 片段。
 
