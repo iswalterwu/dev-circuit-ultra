@@ -109,3 +109,17 @@ def test_migrate_accepts_a_human_side_ledger(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
 
     assert cli.main(["migrate", "--check", "--project", str(project)]) == 0, capsys.readouterr().out
+
+
+def test_migrate_asks_for_a_trunk_line_when_the_remote_default_differs(tmp_path: Path, capsys) -> None:
+    """Without a trunk line the base is main / master first; a different remote default needs a decision."""
+    remote = tmp_path / "remote"
+    write(remote, "README.md", "# r\n")
+    for args in (("init", "-q", "-b", "workbench"), ("add", "-A"), ("commit", "-q", "-m", "init")):
+        subprocess.run(["git", "-C", str(remote), *args], check=True, capture_output=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(clone), "branch", "main"], check=True, capture_output=True)
+
+    cli.main(["migrate", "--check", "--project", str(clone)])
+    assert any("主干" in line and "workbench" in line for line in capsys.readouterr().out.splitlines())

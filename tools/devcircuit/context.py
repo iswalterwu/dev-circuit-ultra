@@ -24,7 +24,11 @@ READ_ME = re.compile(r"^>\s*\*\*读我\*\*\s*[：:]\s*(.*)$")
 CURRENT_SLICE = re.compile(r"^-\s+(S\d+[：:].*?)\s*[（(]当前[）)]")
 SLICE = re.compile(r"^-\s+(S\d+[：:].*)$")
 CAPABILITY_LINE = re.compile(r"^能力[：:]\s*(.*)$")
-TRUNK_LINE = re.compile(r"^\s*(?:[-*]\s*)?主干[：:]\s*`?([^\s`（(，,。；;]+)`?", re.MULTILINE)
+TRUNK_LINE = re.compile(  # "- 主干：`main`", "1. **主干**: main", "**主干：** main", or "| 主干 | main |"
+    r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\*\*)?主干(?:\*\*)?[ \t]*[：:][ \t]*(?:\*\*)?(?P<value>[^\n]*)$"
+    r"|^[ \t]*\|[ \t]*(?:\*\*)?主干(?:\*\*)?[ \t]*\|(?P<cell>[^|\n]*)\|",
+    re.MULTILINE)
+TRUNK_NAME = re.compile(r"[ \t]*(?:\*\*)?`?([^\s`（(，,。；;|*]+)")
 CODE_WORD = re.compile(r"(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])")
 MAX_TITLE = 160
 MAX_LISTED_IDS = 10
@@ -132,12 +136,22 @@ def _git_lines(root: Path, *args: str) -> list[str]:
 
 
 def named_trunk(root: Path) -> str | None:
-    """The trunk AGENTS.md names on its 主干 line, if it has one."""
-    agents = root / "AGENTS.md"
-    if not agents.is_file():
+    """The trunk AGENTS.md names on its 主干 line, if it has one.
+
+    A 主干 line without a branch name is an error: quietly ignoring it would compare against
+    another branch while the user believes the trunk is set.
+    """
+    try:
+        text = (root / "AGENTS.md").read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:  # no AGENTS.md, or one that cannot be read: the same as no 主干 line
         return None
-    match = TRUNK_LINE.search(agents.read_text(encoding="utf-8-sig", errors="replace"))
-    return match.group(1) if match else None
+    match = TRUNK_LINE.search(text)
+    if not match:
+        return None
+    name = TRUNK_NAME.match(match.group("value") if match.group("value") is not None else match.group("cell"))
+    if not name:
+        raise ContextError("AGENTS.md 的主干一行没写分支名：写成 `- 主干：`<分支>``，或者删掉这一行")
+    return name.group(1)
 
 
 def remote_trunk(root: Path) -> str | None:
@@ -149,9 +163,10 @@ def remote_trunk(root: Path) -> str | None:
 def merge_base(root: Path, base: str | None) -> tuple[str, str] | None:
     """Return (base name, merge-base sha), or None when there is nothing to compare against.
 
-    Without --base: the trunk AGENTS.md names (local branch, then origin's), else the remote's default
-    branch, then main and master. An explicit base or a named trunk that cannot be compared is an
-    error: falling back silently would hand the reviewer the wrong change set, or an empty one.
+    Without --base: the trunk AGENTS.md names (local branch, then origin's); without one, main and
+    master as in 0.6, and the remote's default branch only when neither exists, so a stale origin/HEAD
+    cannot move an old project's base. An explicit base or a named trunk that cannot be compared is
+    an error: falling back silently would hand the reviewer the wrong change set, or an empty one.
     """
     if _git(root, "rev-parse", "--is-inside-work-tree") is None:
         if base:
@@ -164,7 +179,7 @@ def merge_base(root: Path, base: str | None) -> tuple[str, str] | None:
         candidates = [named, f"origin/{named}"]
     else:
         remote = remote_trunk(root)
-        candidates = [*([remote, f"origin/{remote}"] if remote else []), "main", "master"]
+        candidates = ["main", "master", *([remote, f"origin/{remote}"] if remote else [])]
     for candidate in dict.fromkeys(candidates):
         sha = (_git(root, "merge-base", candidate, "HEAD") or "").strip()
         if sha:
@@ -450,7 +465,8 @@ def render_feature(root: Path, feature: str, base: str | None = None, review: bo
             out += stat or ["（没有已跟踪文件的改动）"]
     else:
         out.append("== 要求 ==")
-        out.append("没有可比的基线（不是 git 仓库，或找不到 main / master；可以用 --base 指定）。"
+        out.append("没有可比的基线（不是 git 仓库、还没有提交，或找不到 main / master / 远端默认分支；"
+                   "可以用 --base 指定，或在 AGENTS.md 写一行主干）。"
                    "下面按卡里的“能力：”列出要求清单。")
         codes_on_card = _card_codes(card_text)
         for capability in capabilities:

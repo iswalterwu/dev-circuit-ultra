@@ -14,7 +14,7 @@
 
 跑完 CLI 后，仍要填写 AGENTS.md 里的项目事实。不用 CLI 生成文件时，按下面的步骤手动做：
 
-1. 把 `templates/AGENTS.md` 复制到项目根目录，填上项目事实：命令、代码地图、红线、审核模型。
+1. 把 `templates/AGENTS.md` 复制到项目根目录，填上项目事实：命令、代码地图、红线、主干、审核模型。
 2. 项目根目录的 `CLAUDE.md` 只写一行：`@AGENTS.md`。
 3. 建 `specs/` 目录，把 `templates/backlog.md` 放进去，改名为 `specs/backlog.md`。
 4. 建 `docs/requirements/`，放入 `templates/project/docs/requirements/README.md`；以后每个能力一份规格，按 `templates/requirements.md` 写。

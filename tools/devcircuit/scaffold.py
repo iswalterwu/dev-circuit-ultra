@@ -5,6 +5,7 @@ functions, so the behaviour lives in one place and works on every platform.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from . import context
 from ._loader import load_script, skill_root
 
 HOOK_FILE = ".githooks/pre-commit"
+TEMPLATE_TRUNK = re.compile(r"^- 主干：.*\n", re.MULTILINE)
 HOOK_RULE = ".githooks/** text eol=lf"
 AUTO_RULE = "* text=auto eol=lf"
 
@@ -108,28 +110,58 @@ def _run_guards(root: Path) -> tuple[int, int]:
     return codes[0], codes[1]
 
 
-def _adopted_trunk(root: Path) -> str:
-    """The branch an adopted repo integrates into: origin's default branch, else the current one."""
+def _git_quiet(root: Path, *args: str) -> str | None:
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _adopted_trunk(root: Path) -> tuple[str, str] | None:
+    """(trunk, where the guess came from) for an adopted repo, or None when there is no safe guess.
+
+    The remote's default branch, then a local main / master, then the current branch unless it is a
+    feature branch: never a branch that goes away with the feature it was adopted on.
+    """
     remote = context.remote_trunk(root)
     if remote:
-        return remote
-    current = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--quiet", "--short", "HEAD"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
-    return current if current and not current.startswith("feat/") else "main"
+        return remote, "远端默认分支"
+    for name in ("main", "master"):
+        if _git_quiet(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is not None:
+            return name, "本地已有的分支"
+    current = _git_quiet(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if current and not current.startswith("feat/"):
+        return current, "当前分支"
+    return None
+
+
+def _trunk_note(root: Path, trunk: tuple[str, str] | None, written: bool) -> str | None:
+    """Say which trunk adopt wrote into AGENTS.md, or that the file still needs one."""
+    if written:
+        if trunk:
+            return f"AGENTS.md 的主干按{trunk[1]}填成 {trunk[0]}；不对就改第 5 节的“主干”一行。"
+        return "看不出主干，AGENTS.md 没写主干一行：主干不是 main / master 时，在第 5 节加一行 `- 主干：`<分支>``。"
+    try:
+        if context.named_trunk(root):
+            return None
+    except context.ContextError as error:
+        return str(error)
+    return "AGENTS.md 已存在、没有主干一行：主干不是 main / master 时，在第 5 节加一行 `- 主干：`<分支>``。"
 
 
 def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     """Create a dev-circuit-ultra project skeleton, or fill the gaps in a repo."""
     root = _prepare_target(path, adopt)
     project_name = name or root.name
-    trunk = _adopted_trunk(root) if adopt else "main"
+    trunk = _adopted_trunk(root) if adopt else ("main", "新项目")
     created: list[str] = []
     skipped: list[str] = []
 
     for relative, (source, substitute) in PROJECT_FILES.items():
         content = read_template(source)
         if substitute:
-            content = content.replace("<项目名>", project_name).replace("主干：`main`", f"主干：`{trunk}`")
+            content = content.replace("<项目名>", project_name)
+            content = (content.replace("主干：`main`", f"主干：`{trunk[0]}`") if trunk
+                       else TEMPLATE_TRUNK.sub("", content))
         _write_missing(root, relative, content, created, skipped)
     _ensure_gitattributes(root, adopt, created, skipped)
     make_executable(root / HOOK_FILE)
@@ -163,6 +195,8 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     print(f"已存在、未覆盖：{'、'.join(skipped) if skipped else '无'}", file=out)
     print(f"doc_guard 退出码：{guard_exit}", file=out)
     print(f"spec_check 退出码：{spec_exit}", file=out)
+    if adopt and (note := _trunk_note(root, trunk, "AGENTS.md" in created)):
+        print(note, file=out)
     if adopt:
         print("下一步：填写 AGENTS.md 里的项目事实；按上面 doc_guard 报出的问题清理旧文档；"
               "然后 git add -A，运行 git update-index --chmod=+x .githooks/pre-commit，再提交。",

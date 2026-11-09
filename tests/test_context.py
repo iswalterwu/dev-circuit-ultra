@@ -3,6 +3,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import devcircuit.cli as cli
 import devcircuit.context as context_module
 
@@ -270,3 +272,47 @@ def test_a_trunk_agents_names_must_exist(tmp_path: Path, capsys) -> None:
 
     assert cli.main(["context", "--feature", "add-export", "--root", str(tmp_path)]) == 2
     assert "AGENTS.md" in capsys.readouterr().err
+
+
+def test_the_trunk_line_is_read_in_common_markdown_shapes(tmp_path: Path) -> None:
+    """A trunk line the tool cannot read silently falls back to another branch: the wrong base."""
+    for line in ("- **主干**：`workbench`", "1. 主干：workbench", "+ 主干：`workbench`",
+                 "- 主干 ：workbench", "**主干：** `workbench`", "| 主干 | `workbench` |"):
+        write(tmp_path, "AGENTS.md", f"# 项目\n\n{line}\n")
+        assert context_module.named_trunk(tmp_path) == "workbench", line
+
+
+def test_a_trunk_line_without_a_branch_is_an_error(tmp_path: Path) -> None:
+    write(tmp_path, "AGENTS.md", "# 项目\n\n- 主干：\n- 分支：每个功能在 feat/ 上做\n")
+    with pytest.raises(context_module.ContextError, match="主干"):
+        context_module.named_trunk(tmp_path)
+
+
+def test_with_a_trunk_line_and_no_commits_there_is_nothing_to_compare(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q", "-b", "main")
+    write(tmp_path, "AGENTS.md", "# 项目\n\n- 主干：`main`\n")
+    assert context_module.merge_base(tmp_path, None) is None
+
+
+def test_a_trunk_that_only_exists_on_origin_is_used_from_there(tmp_path: Path) -> None:
+    remote = _trunk_repo(tmp_path / "remote", "workbench")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    git(clone, "switch", "-q", "-c", "feat/add-export")
+    git(clone, "branch", "-D", "workbench")
+    write(clone, "AGENTS.md", "# 项目\n\n- 主干：`workbench`\n")
+
+    found = context_module.merge_base(clone, None)
+    assert found and found[0] == "origin/workbench"
+
+
+def test_without_a_trunk_line_local_main_still_wins_over_a_stale_remote_default(tmp_path: Path) -> None:
+    """0.6 compared against main; a stale origin/HEAD must not silently move an old project's base."""
+    remote = _trunk_repo(tmp_path / "remote", "master")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    git(clone, "switch", "-q", "-c", "main")          # the project moved to main; origin/HEAD still says master
+    git(clone, "switch", "-q", "-c", "feat/add-export")
+
+    found = context_module.merge_base(clone, None)
+    assert found and found[0] == "main"

@@ -218,9 +218,10 @@ def test_hooks_install_adds_the_guard_config_to_gitignore(tmp_path: Path, capsys
     out = capsys.readouterr().out
     data = (project / ".gitignore").read_bytes()
     assert data.startswith(b"node_modules/\r\ndist/\r\n")
-    assert data.endswith(b"\r\n.dev-circuit/guard.json\r\n")
+    assert b"\r\n.dev-circuit/guard.json\r\n" in data
+    assert data.endswith(b"\r\n.dev-circuit/claude-settings.hook.json\r\n")
     # done by the command: under the hook, an agent that edits .gitignore naming guard.json is blocked
-    assert "已把 .dev-circuit/guard.json 加进 .gitignore" in out
+    assert "已把 .dev-circuit/guard.json、.dev-circuit/claude-settings.hook.json 加进 .gitignore" in out
 
     assert cli.main([*args, "--force"]) == 0
     assert "已把" not in capsys.readouterr().out
@@ -414,3 +415,69 @@ def test_adopt_writes_the_repos_trunk_into_agents(tmp_path: Path, capsys) -> Non
     assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
     capsys.readouterr()
     assert "主干：`develop`" in (repo / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def _repo_on(root: Path, branch: str) -> Path:
+    write(root, "README.md", "# r\n")
+    _git(root, "init", "-q", "-b", branch)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "init")
+    return root
+
+
+def test_adopt_takes_the_remotes_default_branch(tmp_path: Path, capsys) -> None:
+    remote = _repo_on(tmp_path / "remote", "workbench")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True, capture_output=True)
+    _git(clone, "switch", "-q", "-c", "feat/x")
+
+    assert cli.main(["init", "--path", str(clone), "--adopt"]) == 0
+    out = capsys.readouterr().out
+    assert "主干：`workbench`" in (clone / "AGENTS.md").read_text(encoding="utf-8")
+    assert "workbench" in out  # says which trunk it wrote, so a wrong guess gets noticed
+
+
+def test_adopt_on_a_feature_branch_takes_the_local_trunk(tmp_path: Path, capsys) -> None:
+    repo = _repo_on(tmp_path / "repo", "master")
+    _git(repo, "switch", "-q", "-c", "feat/adopt")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    capsys.readouterr()
+    assert "主干：`master`" in (repo / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_adopt_leaves_the_trunk_out_when_it_cannot_tell(tmp_path: Path, capsys) -> None:
+    repo = _repo_on(tmp_path / "repo", "feat/first")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    capsys.readouterr()
+    assert "主干：" not in (repo / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_adopt_reminds_an_existing_agents_file_about_the_trunk(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    write(repo, "AGENTS.md", "# 已有入口\n")
+    _git(repo, "init", "-q", "-b", "develop")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    assert "主干" in capsys.readouterr().out
+
+
+def test_errors_about_unencodable_paths_do_not_crash(tmp_path: Path) -> None:
+    """A lone surrogate (a non-UTF-8 byte in a Linux path) must not turn a readable error into a traceback."""
+    env = {**os.environ, "PYTHONPATH": str(Path(cli.__file__).resolve().parents[1])}
+    result = subprocess.run([sys.executable, "-m", "devcircuit.cli", "context", "--map",
+                             "--root", str(tmp_path / "x\udcff")], capture_output=True, env=env)
+    assert result.returncode == 2
+    assert b"Traceback" not in result.stderr
+
+
+def test_hooks_install_keeps_the_claude_snippet_out_of_git(tmp_path: Path, capsys) -> None:
+    project, _, _ = install_claude_hook(tmp_path, capsys)
+
+    lines = (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".dev-circuit/claude-settings.hook.json" in lines

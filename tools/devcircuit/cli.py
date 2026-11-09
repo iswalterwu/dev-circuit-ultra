@@ -20,6 +20,7 @@ from .sync import sync as sync_skills
 CONFIG_DIR = ".dev-circuit"
 CONFIG_NAME = "guard.json"
 GUARD_IGNORE = f"{CONFIG_DIR}/{CONFIG_NAME}"
+SNIPPET_IGNORE = f"{CONFIG_DIR}/claude-settings.hook.json"
 IS_WINDOWS = os.name == "nt"
 HOOKS = {
     "pi": (("pi", "ledger-guard.js"), Path(".pi") / "extensions" / "ledger-guard.js"),
@@ -64,14 +65,14 @@ def claude_snippet(hook: Path) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _ignore_guard(project: Path) -> bool:
-    """Have git ignore guard.json; True when this call added the line.
+def _ignore(project: Path, entry: str, why: str) -> bool:
+    """Have git ignore a machine-local file under .dev-circuit/; True when this call added the line.
 
     The command does it rather than the agent: once the hook is on, any tool call that names
     guard.json, an edit of .gitignore included, is blocked.
     """
     try:
-        probe = subprocess.run(["git", "-C", str(project), "check-ignore", "-q", "--no-index", GUARD_IGNORE],
+        probe = subprocess.run(["git", "-C", str(project), "check-ignore", "-q", "--no-index", entry],
                                capture_output=True)
         if probe.returncode == 0:  # already covered, maybe by a wider rule such as .dev-circuit/*.json
             return False
@@ -80,19 +81,19 @@ def _ignore_guard(project: Path) -> bool:
     gitignore = project / ".gitignore"
     data = gitignore.read_bytes() if gitignore.is_file() else b""
     lines = data.decode("utf-8-sig", errors="replace").splitlines()
-    if any(line.strip().lstrip("/") == GUARD_IGNORE for line in lines):
+    if any(line.strip().lstrip("/") == entry for line in lines):
         return False
     eol = "\r\n" if b"\r\n" in data else "\n"
     lead = eol if data and not data.endswith(b"\n") else ""
     with gitignore.open("a", encoding="utf-8", newline="") as handle:
-        handle.write(f"{lead}# 本机路径，不要提交：账本位置只对这台机器有意义{eol}{GUARD_IGNORE}{eol}")
+        handle.write(f"{lead}# 本机路径，不要提交：{why}{eol}{entry}{eol}")
     return True
 
 
-def _out(stream=None):
+def _out(stream=None, errors=None):
     stream = stream or sys.stdout
     try:
-        stream.reconfigure(encoding="utf-8")
+        stream.reconfigure(encoding="utf-8", **({"errors": errors} if errors else {}))
     except (AttributeError, OSError):
         pass
     return stream
@@ -205,7 +206,9 @@ def _install_hooks(args) -> int:
         json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    ignored_now = _ignore_guard(project)
+    ignored_now = [entry for entry, why in ((GUARD_IGNORE, "账本位置只对这台机器有意义"),
+                                            (SNIPPET_IGNORE, "hook 片段里是这台机器的路径"))
+                   if (entry == GUARD_IGNORE or args.harness == "claude") and _ignore(project, entry, why)]
 
     source, relative = HOOKS[args.harness]
     destination = project / relative
@@ -220,7 +223,7 @@ def _install_hooks(args) -> int:
 
     print(f"已写入配置：{config_path}", file=out)
     if ignored_now:
-        print(f"已把 {GUARD_IGNORE} 加进 .gitignore：它记录的是本机账本路径。", file=out)
+        print(f"已把 {'、'.join(ignored_now)} 加进 .gitignore：它们记录的是本机路径。", file=out)
     print(f"账本：{config['ledger']}", file=out)
     print("", file=out)
     if args.harness == "pi":
@@ -383,7 +386,9 @@ def _migrate(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     _out()
-    _out(sys.stderr)  # errors go here; piped on Chinese Windows it would otherwise be GBK
+    # Errors go here; piped on Chinese Windows it would otherwise be GBK. Keep stderr's usual
+    # backslashreplace so a path that cannot be encoded still gives a readable error, not a traceback.
+    _out(sys.stderr, errors="backslashreplace")
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog="devcircuit",

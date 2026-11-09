@@ -83,6 +83,21 @@ def _agents(project: Path) -> list[str]:
     return actions
 
 
+def _trunk(project: Path) -> list[str]:
+    """Without a 主干 line the base is main / master first; a different remote default needs a decision."""
+    try:
+        if context.named_trunk(project):
+            return []
+    except context.ContextError as error:
+        return [str(error)]
+    remote = context.remote_trunk(project)
+    chosen = context.merge_base(project, None) if remote else None
+    if chosen and chosen[0] not in (remote, f"origin/{remote}"):
+        return [f"AGENTS.md 没写主干：默认基线取 {chosen[0]}，远端默认分支却是 {remote}。确认哪个是主干，"
+                "在 AGENTS.md 第 5 节加一行 `- 主干：`<分支>``"]
+    return []
+
+
 def _hook_commands(settings) -> list[str]:
     """PreToolUse command strings, skipping anything not shaped like Claude Code settings."""
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
@@ -138,7 +153,7 @@ def _tooling(project: Path) -> list[str]:
 
 
 def check(project: Path) -> list[str]:
-    actions = [*_cards(project), *_sizes(project), *_agents(project)]
+    actions = [*_cards(project), *_sizes(project), *_agents(project), *_trunk(project)]
     if (project / ".dev-circuit" / "reviewer.json").is_file():
         actions.append(".dev-circuit/reviewer.json：可以删掉；审核改为每个功能一次，模型写在 AGENTS.md 的“审核模型”")
     architecture = project / "docs" / "architecture.md"
