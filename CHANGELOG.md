@@ -44,6 +44,10 @@
 - `doc_guard` 0.4.0：新规则 `oversize`（能力规格超过 400 行、卡超过 80 行）和 `arch-summary`（`docs/architecture.md` 缺框架摘要或摘要超过 60 个非空行）。
 - `spec_check` 0.6.0：新规则 `code-before-design`，在有 `specs/` 的 git 仓库里，`feat/<feature>` 分支上卡还不存在就改了代码时报出；`--list-rules` 的列宽放宽到 20。
 
+### 其他
+
+- 删除旧流程的图（`five-steps`、`after-setup`）、60 秒演示视频和生成它的 `demo/make_demo_60s.py`；npm 和 pip 的一句话简介改成现在的流程。
+
 ### 升级
 
 1. 先跑 `devcircuit migrate --check --project <项目>`，按它的清单处理；有未提交的 `specs/` 改动先问用户。

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "devcircuit"
 version = "0.5.0"
-description = "Document hygiene and requirement-ID checks for spec-driven repositories, plus ledger-boundary hooks for coding agents"
+description = "CLI for the dev-circuit-ultra flow: design context by requirement ID, a write-only external ledger with consistency checks, feature close-out, document and requirement-ID checkers, ledger-boundary hooks"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -32,7 +32,7 @@ exclude = ["**/__pycache__", "**/*.pyc", "**/*.pyo", "**/.pytest_cache"]
 packages = ["tools/devcircuit"]
 
 # The skill tree and the hooks are the payload: `devcircuit init` scaffolds from
-# skills/*/templates, `sync` copies the three skills, `hooks install` copies the
+# skills/*/templates, `sync` copies the two skills, `hooks install` copies the
 # hooks. One source of truth in git, one in the wheel.
 [tool.hatch.build.targets.wheel.force-include]
 "skills" = "devcircuit/assets/skills"

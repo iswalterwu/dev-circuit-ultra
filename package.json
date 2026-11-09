@@ -1,7 +1,7 @@
 {
   "name": "dev-circuit-ultra",
   "version": "0.5.0",
-  "description": "Less context. Less ceremony. More shipping. A design-first five-step loop for coding agents.",
+  "description": "Less context. Less ceremony. One feature at a time. A design-first development flow for coding agents.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -22,8 +22,6 @@
     "cordis.patch.yml",
     "skills",
     "assets",
-    "!assets/demo-60s-*.mp4",
-    "!assets/demo-60s-*.webm",
     "!**/__pycache__/**",
     "!**/*.pyc",
     "demo",

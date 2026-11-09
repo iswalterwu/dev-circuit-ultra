@@ -134,7 +134,7 @@ The demo creates a throwaway project and an external ledger and walks one featur
 | Design | proposal / design / tasks / spec delta, kept after archiving | capability specs and `docs/architecture.md` edited in place; the card is deleted at close |
 | Decision history | in the change and the archive, inside the repo | private ledger outside the project; the agent writes but never reads it, `ledger check` keeps it consistent |
 | What the agent reads | per-phase skill instructions and several files per change | current requirements and the card, fetched by ID through `devcircuit context` |
-| Review | optional verify | one independent review per feature + one fix round |
+| Review | optional verify | one independent review per feature that exercises failure paths first; one fix round for must-fix items |
 | Close | `openspec archive` merges the delta and archives | one `devcircuit close` command |
 | Fits | audit trails, hand-offs between people, cross-repo planning | one person with an agent, one feature at a time |
 

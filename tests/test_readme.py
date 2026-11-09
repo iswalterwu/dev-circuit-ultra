@@ -1,5 +1,7 @@
 """The repo's own docs describe the flow SKILL.md runs, so a reader and an agent see the same steps."""
 
+import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +17,21 @@ def read(name: str) -> str:
 def test_docs_drop_the_retired_flow():
     for name in DOCS:
         assert [word for word in RETIRED if word in read(name)] == [], name
+
+
+def test_package_descriptions_drop_the_retired_flow():
+    """npm and pip show these one-liners before anyone opens the README."""
+    pyproject = re.search(r'^description = "(.*)"$', read("pyproject.toml"), re.MULTILINE)
+    descriptions = {"package.json": json.loads(read("package.json"))["description"],
+                    "pyproject.toml": pyproject.group(1)}
+    for name, text in descriptions.items():
+        assert [word for word in RETIRED if word in text] == [], name
+
+
+def test_every_asset_is_shown_by_a_doc():
+    """assets/ ships in the npm package: a file no doc shows is stale weight."""
+    docs = "".join(read(name) for name in DOCS)
+    assert [path.name for path in sorted((ROOT / "assets").iterdir()) if path.name not in docs] == []
 
 
 def test_readmes_name_the_steps_and_commands_the_skill_uses():

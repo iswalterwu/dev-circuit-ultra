@@ -134,7 +134,7 @@ demo 在临时目录里建一个项目和一个项目外的账本，走一遍：
 | 设计 | proposal / design / tasks / spec delta，归档后长期保留 | 能力规格和 `docs/architecture.md` 原地改；卡收尾时删掉 |
 | 决策历史 | 写进 change 和 archive，留在仓库里 | 项目外私有账本；开发 agent 只写不读，`ledger check` 核对一致 |
 | 开发 agent 读什么 | 各阶段的技能指令和 change 里的多份文件 | `devcircuit context` 按编号取的现行要求和卡 |
-| 审核 | 可选的 verify | 每个功能一次独立审核 + 一轮修复 |
+| 审核 | 可选的 verify | 每个功能一次独立审核，先实际触发出错路径；必须改的修一轮 |
 | 收尾 | `openspec archive` 合并 delta、归档 | `devcircuit close` 一条命令 |
 | 适合 | 审计轨迹、跨人交接、跨仓库规划 | 一个人带 agent，一次交付一个功能 |
 

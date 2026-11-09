@@ -21,11 +21,3 @@ python demo/run_demo.py
 需要 PowerShell 7、Python 3、git。demo 直接用本仓库的 `tools/` 跑 `devcircuit`，不需要先安装。
 
 强隔离由 [docker/compose.yaml](../docker/compose.yaml) 的挂载边界保证；这个 demo 验证的是路径和协议边界，不启动 Claude Code / pi 容器。
-
-## 60 秒视频
-
-`assets/demo-60s-{en,zh}.webm`（同时保留 `.mp4`）和脚本 `demo/make_demo_60s.py` 还没跟上现在的流程，README 暂时不引用它们。重新生成需要 Windows、Pillow、OpenCV 和 numpy：
-
-```powershell
-python demo/make_demo_60s.py
-```
