@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,26 @@ def _frontmatter(skill_name: str) -> dict[str, str]:
             key, value = line.split(":", 1)
             fields[key] = value.strip().strip('"')
     return fields
+
+
+def _found(relative: str, pattern: str) -> str:
+    """The first group of `pattern` in a repo file; frontmatter-indented keys included."""
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    return re.search(pattern, text, re.MULTILINE).group(1)
+
+
+def test_one_release_version_everywhere():
+    """Versions follow the git tag; only doc_guard and spec_check keep their own line (see CHANGELOG)."""
+    version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    found = {
+        "pyproject.toml": _found("pyproject.toml", r'^version = "(.*)"$'),
+        "devcircuit.__version__": _found("tools/devcircuit/__init__.py", r'^__version__ = "(.*)"$'),
+        "docs/dsh.md": _found("docs/dsh.md", r"--version (\S+)"),
+        **{f"skills/{name}/SKILL.md": _found(f"skills/{name}/SKILL.md", r'^ +version: "(.*)"$')
+           for name in SKILL_NAMES},
+    }
+    assert {name: value for name, value in found.items() if value != version} == {}
+    assert f"\n## {version}\n" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_pi_and_dsh_package_manifest():

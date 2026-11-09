@@ -5,7 +5,7 @@ whenToUse: 当 human 需要在独立会话里查询私有账本、生成可授�
 disable-model-invocation: true
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.6.0"
   author: iswalterwu
   homepage: https://github.com/iswalterwu/dev-circuit-ultra
 ---
