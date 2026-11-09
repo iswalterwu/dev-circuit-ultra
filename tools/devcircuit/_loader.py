@@ -18,7 +18,7 @@ import sys
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 SOURCE_ROOT = PACKAGE_DIR.parents[1]
-SKILL_NAMES = ("dev-circuit-ultra", "dev-circuit-archivist", "dev-circuit-ledger")
+SKILL_NAMES = ("dev-circuit-ultra", "dev-circuit-ledger")
 
 
 def _pick(installed: Path, checkout: Path) -> Path:
@@ -28,7 +28,7 @@ def _pick(installed: Path, checkout: Path) -> Path:
 
 
 def skills_dir() -> Path:
-    """Directory that holds the three skill folders."""
+    """Directory that holds the skill folders."""
     path = _pick(PACKAGE_DIR / "assets" / "skills", SOURCE_ROOT / "skills")
     if not path.is_dir():
         raise RuntimeError(

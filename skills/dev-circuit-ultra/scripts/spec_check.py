@@ -1,6 +1,7 @@
-"""spec_check v0.5.0
+"""spec_check v0.6.0
 
-用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段。
+用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段；
+在 feat/<功能> 分支上，卡写好之前不许改代码。
 在研功能的卡（specs/）不参与检查：要求直接写在能力规格里。
 用法：python spec_check.py [--root DIR] [--json] [--report] [--ignore GLOB]... [--ignore-rule RULE]...
 输出：每个问题一行；没有问题时打印一行"通过"和能力规格、要求的数量。--list-rules 列出每条规则查什么。
@@ -21,19 +22,21 @@ import fnmatch
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NamedTuple
 
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
     "bad-header",
     "dup-id",
     "dangling-ref",
+    "code-before-design",
 )
 
 SKIPPED_DIRS = frozenset({
@@ -54,6 +57,7 @@ HEADER = re.compile(r"^(?i:代号|code|capability)\s*[：:]\s*([A-Z]{2,8})\s*$")
 DEFINITION = re.compile(BULLET + r"(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*[：:]\s*")
 TABLE_DEFINITION = re.compile(r"^\|\s*(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*\|")
 DEMONSTRATION = re.compile(r"^\s+- (?:证明[：:].*演示|demonstrated by[：:])")
+FEATURE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # What --list-rules prints; the scope is built from the constants above so it cannot drift from them.
 RULE_HELP = {
@@ -61,6 +65,8 @@ RULE_HELP = {
                   "代号在别的能力规格里已用过，或要求编号的前缀和本文件代号不符",
     "dup-id": "同一个要求编号定义了不止一次（跨文件也算）",
     "dangling-ref": "代码或测试里引用的要求编号（前缀是已声明的代号），在能力规格里不存在",
+    "code-before-design": "在 feat/<功能> 分支上改了代码（已暂存、未暂存或未跟踪），但 specs/<功能>/spec.md 还不存在；"
+                          "只在有 specs/ 目录的 git 仓库里查",
 }
 SCOPE = ("范围：docs/requirements/ 下除 README.md 外的 .md；引用在这些后缀的文件里找："
          + " ".join(sorted(CODE_EXTENSIONS))
@@ -221,6 +227,44 @@ def _is_test(path: Path) -> bool:
     )
 
 
+def _git_lines(root: Path, *args: str) -> list[str] | None:
+    try:
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return result.stdout.splitlines() if result.returncode == 0 else None
+
+
+def _design_gate(root: Path, patterns) -> list[Finding]:
+    """On feat/<name>, code changes need the card that the settled design produces first."""
+    if not (root / "specs").is_dir():
+        return []
+    branch = _git_lines(root, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch or not branch[0].startswith("feat/"):
+        return []
+    feature = branch[0][len("feat/"):]
+    changed: set[str] = set()
+    for args in (("diff", "--cached", "--name-only", "--relative"), ("diff", "--name-only", "--relative"),
+                 ("ls-files", "--others", "--exclude-standard")):
+        changed.update(_git_lines(root, *args) or [])
+    code = sorted(path for path in changed
+                  if Path(path).suffix.lower() in CODE_EXTENSIONS
+                  and path not in VENDORED_GUARDS and not path_is_ignored(path, patterns))
+    if not code:
+        return []
+    if not FEATURE_NAME.match(feature):
+        return [Finding("code-before-design", "specs/", 0,
+                        f"分支 {branch[0]} 对不上卡：功能名只用字母、数字、点、下划线和连字符，一段，不含斜杠；"
+                        "改用 feat/<功能名>，卡放在 specs/<功能名>/spec.md")]
+    card = f"specs/{feature}/spec.md"
+    if (root / card).is_file():
+        return []
+    return [Finding("code-before-design", card, 0,
+                    f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但还没有卡："
+                    "用户说“定了”之后先写能力规格和卡、提交设计，再写代码")]
+
+
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
          use_ignore_file: bool = True) -> list[Finding]:
     """Check declared IDs and the references in source files."""
@@ -235,6 +279,7 @@ def _scan(root: Path, patterns, ignored_rules=()) -> tuple[list[Finding], int]:
         if identifier in requirements or identifier in legacy:
             continue
         findings.append(Finding("dangling-ref", path.as_posix(), number, f"引用的编号不存在：{identifier}"))
+    findings.extend(_design_gate(root, patterns))
 
     ignored = set(ignored_rules)
     if ignored:
@@ -309,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_rules:
         for rule in RULES:
-            print(f"{rule:<14}{RULE_HELP[rule]}")
+            print(f"{rule:<20}{RULE_HELP[rule]}")
         print(SCOPE)
         return 0
     if not args.root.is_dir():

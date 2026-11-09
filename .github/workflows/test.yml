@@ -51,12 +51,13 @@ jobs:
           test -f "$RUNNER_TEMP/app-init/scripts/spec_check.py"
           test -f "$RUNNER_TEMP/app-init/.githooks/pre-commit"
           git -C "$RUNNER_TEMP/app-init" log --oneline | head -1
-          "$CLI" ledger --path "$RUNNER_TEMP/ledgers/ci"
+          "$CLI" ledger init --path "$RUNNER_TEMP/ledgers/ci"
           git -C "$RUNNER_TEMP/ledgers/ci" log --oneline | head -1
           "$CLI" sync --target "$RUNNER_TEMP/skills"
           test -f "$RUNNER_TEMP/skills/dev-circuit-ultra/SKILL.md"
-          test -f "$RUNNER_TEMP/skills/dev-circuit-archivist/SKILL.md"
+          test -f "$RUNNER_TEMP/skills/dev-circuit-ledger/SKILL.md"
           "$CLI" vendor --project "$RUNNER_TEMP/app-init"
+          "$CLI" context --map --root "$RUNNER_TEMP/app-init"
       - name: Install the sdist too (catches a broken source layout)
         run: |
           python -m venv "$RUNNER_TEMP/sdist-venv"

@@ -7,7 +7,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_NAMES = ("dev-circuit-ultra", "dev-circuit-archivist", "dev-circuit-ledger")
+SKILL_NAMES = ("dev-circuit-ultra", "dev-circuit-ledger")
 
 
 def _frontmatter(skill_name: str) -> dict[str, str]:
@@ -33,6 +33,10 @@ def test_pi_and_dsh_package_manifest():
     assert "skills" in manifest["files"]
 
 
+def test_the_archivist_is_retired():
+    assert not (ROOT / "skills" / "dev-circuit-archivist").exists()
+
+
 def test_skill_frontmatter_is_store_compatible():
     for name in SKILL_NAMES:
         fields = _frontmatter(name)
@@ -40,13 +44,12 @@ def test_skill_frontmatter_is_store_compatible():
         assert fields["description"]
         assert fields["whenToUse"]
 
-    assert _frontmatter("dev-circuit-archivist")["disable-model-invocation"] == "true"
     assert _frontmatter("dev-circuit-ledger")["disable-model-invocation"] == "true"
     assert "disable-model-invocation" not in _frontmatter("dev-circuit-ultra")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is required for the DSH plugin smoke test")
-def test_dsh_plugin_registers_three_skills():
+def test_dsh_plugin_registers_both_skills():
     index = (ROOT / "index.js").as_uri()
     script = f"""
 import {{ apply }} from {json.dumps(index)};
@@ -72,6 +75,5 @@ console.log(JSON.stringify(registered.map(skill => ({{
     assert set(rows) == set(SKILL_NAMES)
     assert all(row["hasContent"] and row["hasResourceBase"] for row in rows.values())
     assert rows["dev-circuit-ultra"]["modelInvocable"] is True
-    assert rows["dev-circuit-archivist"]["modelInvocable"] is False
     assert rows["dev-circuit-ledger"]["modelInvocable"] is False
 

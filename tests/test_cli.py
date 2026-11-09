@@ -231,9 +231,13 @@ def test_ledger_and_sync(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
 
     skills = tmp_path / "skills"
+    retired = skills / "dev-circuit-archivist"
+    retired.mkdir(parents=True)
+    (retired / "SKILL.md").write_text("old\n", encoding="utf-8")
     assert cli.main(["sync", "--target", str(skills)]) == 0
-    for name in ("dev-circuit-ultra", "dev-circuit-archivist", "dev-circuit-ledger"):
+    for name in ("dev-circuit-ultra", "dev-circuit-ledger"):
         assert (skills / name / "SKILL.md").is_file()
+    assert not retired.exists()  # the dev agent now writes the ledger itself through `ledger add`
     assert not list(skills.rglob("__pycache__"))
     assert "skills synced" in capsys.readouterr().out
 
@@ -265,3 +269,9 @@ def test_pre_commit_hook_is_executable_and_clean(tmp_path: Path) -> None:
     status = subprocess.run(["git", "-C", str(project), "status", "--short"],
                             capture_output=True, text=True, encoding="utf-8")
     assert status.stdout.strip() == ""
+
+
+def test_unknown_arguments_are_rejected(tmp_path: Path, capsys) -> None:
+    # Only the checker passthroughs forward extra flags; elsewhere a typo must not be dropped silently.
+    assert cli.main(["context", "--map", "--root", str(tmp_path), "--bogus"]) == 2
+    assert "--bogus" in capsys.readouterr().err

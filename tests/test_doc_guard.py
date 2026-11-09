@@ -287,3 +287,33 @@ def test_include_scans_extra_docs(tmp_path: Path, capsys) -> None:
     assert scan(tmp_path, includes=["notes"], ignores=["notes"]) == []
     assert main(["--root", str(tmp_path), "--include", "notes"]) == 1
     assert "[bookkeeping-phrase]" in capsys.readouterr().out
+
+
+def test_oversize_capability_spec_and_card(tmp_path: Path) -> None:
+    # Files the agent reads whole stay small: a capability spec up to 400 lines, a card up to 80.
+    write(tmp_path, "docs/requirements/big.md", "代号：BIG\n" + "- line\n" * 400)
+    write(tmp_path, "docs/requirements/ok.md", "代号：OK\n" + "- line\n" * 399)
+    write(tmp_path, "docs/requirements/README.md", "x\n" * 500)
+    write(tmp_path, "specs/f/spec.md", "line\n" * 81)
+    write(tmp_path, "specs/g/spec.md", "line\n" * 80)
+
+    findings = [finding for finding in scan(tmp_path) if finding.rule == "oversize"]
+    assert [(finding.path, finding.line) for finding in findings] == [
+        ("docs/requirements/big.md", 401), ("specs/f/spec.md", 81)]
+    assert "400" in findings[0].message and "80" in findings[1].message
+
+
+def test_architecture_needs_a_short_summary(tmp_path: Path) -> None:
+    # The fit check reads only the summary, so it must exist and stay within 60 non-blank lines.
+    architecture = write(tmp_path, "docs/architecture.md", "# 结构\n\n正文\n")
+    assert [finding.rule for finding in scan(tmp_path)] == ["arch-summary"]
+
+    architecture.write_text('# 结构\n\n<a id="summary"></a>\n## 框架摘要\n\n' + "- 模块\n" * 60
+                            + "\n## 细节\n" + "正文\n" * 100, encoding="utf-8")
+    assert scan(tmp_path) == []
+
+    architecture.write_text('# 结构\n\n## 框架摘要 <a id="summary"></a>\n' + "- 模块\n" * 61
+                            + "## 细节\n正文\n", encoding="utf-8")
+    findings = scan(tmp_path)
+    assert [finding.rule for finding in findings] == ["arch-summary"]
+    assert "61" in findings[0].message

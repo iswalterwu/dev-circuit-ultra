@@ -8,7 +8,7 @@ from pathlib import Path
 from . import __version__
 from ._loader import SKILL_NAMES, skills_dir
 
-LEGACY_SKILLS = ("spec-loop", "design-loop")
+LEGACY_SKILLS = ("spec-loop", "design-loop", "dev-circuit-archivist")
 
 
 def default_targets() -> list[Path]:
@@ -26,7 +26,7 @@ def _skip_caches(directory: str, names: list[str]) -> list[str]:
 
 
 def sync(targets: list[Path] | None = None) -> int:
-    """Install or refresh the three skills in every target directory."""
+    """Install or refresh the skills in every target directory and remove retired ones."""
     source = skills_dir()
     for name in SKILL_NAMES:
         if not (source / name).is_dir():

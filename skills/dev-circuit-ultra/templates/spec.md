@@ -1,5 +1,7 @@
 # <feature>：<一句话说明>
 
+能力：<代号>（已有 / 新建）· 框架：不变 / 已改
+
 ## 目标
 
 <为什么做、给谁用、做成什么样算成功。3–6 行。>
@@ -17,4 +19,4 @@
   - [ ] <步骤>
 - S3：<标题>
 
-<行为要求直接改在 `docs/requirements/<能力>.md`，框架级的结构直接写在 `docs/architecture.md`，这里不重复。功能做完后删除本卡。>
+<行为要求直接改在 `docs/requirements/<能力>.md`，结构直接写在 `docs/architecture.md`，这里不重复。卡不超过 80 行；功能做完后由 `devcircuit close` 删除。>

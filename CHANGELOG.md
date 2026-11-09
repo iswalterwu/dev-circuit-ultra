@@ -2,6 +2,51 @@
 
 只记对使用者有影响的变化。版本号对应 git tag；`doc_guard` / `spec_check` 的脚本版本是各自独立的一条线，不跟包版本走。
 
+## 未发布
+
+### 流程
+
+- 每个需求先**识别**：在研功能的续做或修正、已有能力的变化、新能力、bug、探索。新能力和已有能力的变化过"衔接四问"（数据归谁、扩展点和契约够不够、要不要新依赖或新持久化结构、会不会违背框架约束），有一问不行就先做**框架设计**，再做**功能设计**。
+- 两种设计都在对话里澄清到用户说"定了"：发出设计摘要就结束本轮回复，"定了"之前不写文件、不改代码。回复里有提问、回答或补充就不算定了，哪怕带着"其他按你的建议"：只发变化的部分，问一句"定了吗？"再停。定了以后建 `feat/<feature>` 分支，改能力规格、写卡、记账本。
+- **审核恢复为默认**：每个功能验收前审一次，reviewer 先实际触发出错路径；必须改的修一轮、复查一次，没修好的进交付报告。快车道只在改了契约或 diff 超过约 200 行时审。审核模型写在 AGENTS.md 的"审核模型"一行。
+- 派审核时给出本技能目录里 `reviewer.md` 的完整路径，免得审核子 agent 读到本机装的旧版。
+- 兼容写明白：以前能成功的输入照样成功、输出不变；把崩溃改成可读错误不算破坏兼容。设计摘要和审核的"必须改"都按这条判断，已有命令现在给堆栈也不例外。
+- 收尾用 `devcircuit close`，最后的回复是**交付报告**：做了什么、怎么验收、审核、潜在问题、下一步建议。
+- 能力规格模板要求：新的命令、接口或输入至少一条出错时的要求，或写明"无失败路径"。卡多一行"能力：… · 框架：…"，上限 80 行。
+- `docs/architecture.md` 开头是用 `<a id="summary"></a>` 标出的框架摘要（不超过 60 行），识别阶段只读这一段。
+- 文档地图和能力清单不再手写登记表，由 `devcircuit context --map` 现场生成。
+
+### 账本
+
+- 开发 agent 对账本**只写不读**：`devcircuit ledger add` 追加一条记录，只回执编号。`dev-circuit-archivist` 退役，`devcircuit sync` 会从技能目录里移除它；`dev-circuit-ledger`（human 查询）保留。
+- `devcircuit ledger check` 核对账本和项目：`close-missing`、`design-missing`、`framework-missing`、`commit-missing`、`removal-unrecorded`、`id-stale`；只报功能、编号和提交，不报记录内容。`correction` 记录算补记。
+- `devcircuit ledger init --path` 取代 `devcircuit ledger --path`（旧写法照样可用）。记录新增 `ids`、`ids_removed`、`review`、`source` 字段，旧记录照样保留。
+- `DEVCIRCUIT_LEDGER`、`DEVCIRCUIT_PROJECT` 环境变量优先于 `guard.json`，给容器隔离里账本一侧用；`docker/compose.yaml` 改为 `dev` + `ledger` 两个容器。强 / 最强两档里开发侧写不了账本：开发侧的 `guard.json` 写 `"ledger_side": "human"`，`devcircuit close` 跳过账本步骤并打印要补的命令，由 human 在账本一侧补记和核对。
+- `guard.json` 里的相对账本路径按项目根解析（和 hook 一致），`~` 会展开。
+- 功能名只用字母、数字、点、下划线和连字符，一段，不含斜杠；卡目录、`feat/<feature>` 分支和账本记录都用它。`ledger check` 对不合规的卡报 `bad-feature-name`，`close` 一开始就拒绝不合规的名字。
+- `ledger add` 当场拒绝写错的编号：`--ids` 必须是现有编号，编号之间可以用逗号、顿号、分号或空格隔开。
+- `ledger check` 按仓库里的完整 SHA 核对记录（旧记录里的短 SHA 也认）；`commit-missing` 只查在研功能，squash、rebase 合并之后不会把已收尾的功能都报一遍。
+- `close` 只因本功能和本分支的不一致而停，别的功能的不一致写进交付报告；提交失败时如实报告卡有没有恢复，不删 git 没跟踪的文件。
+- hook 的拦截提示指向 `devcircuit ledger add` / `check`。
+
+### 命令与检查器
+
+- 新增 `devcircuit context`：`--map`、`--capability`、`--ids`、`--feature`、`--review`，按编号和锚点取现行设计，超出上限时截断并列出没给的编号。
+- 新增 `devcircuit close <feature>`：全量检查 → 账本核对 → 删卡并提交 `close <feature>` → 收尾记录 → 再核对 → 交付报告骨架；提交前任何一步不过就不动。
+- 新增 `devcircuit migrate --check`：列出旧项目要改的地方（包括升级后会被 `oversize` 拦下的卡和能力规格），不改文件。
+- `context` 对比时不做改名检测，改名的能力规格不会把原有要求报成"新增"；显式给的 `--base` 不存在时报错，不再悄悄退回"没有基线"。
+- 除了 `doc-guard`、`spec-check`、`check` 会把参数转给检查器，其他子命令遇到不认识的参数直接报错退出 2，不再悄悄丢掉。
+- `doc_guard` 0.4.0：新规则 `oversize`（能力规格超过 400 行、卡超过 80 行）和 `arch-summary`（`docs/architecture.md` 缺框架摘要或摘要超过 60 个非空行）。
+- `spec_check` 0.6.0：新规则 `code-before-design`，在有 `specs/` 的 git 仓库里，`feat/<feature>` 分支上卡还不存在就改了代码时报出；`--list-rules` 的列宽放宽到 20。
+
+### 升级
+
+1. 先跑 `devcircuit migrate --check --project <项目>`，按它的清单处理；有未提交的 `specs/` 改动先问用户。
+2. 进行中的功能：卡里的"规格变化 / 设计 / 验收例子 / 风险 / 待定"等节，要求写进能力规格、结构写进 `docs/architecture.md`（加框架摘要），卡只留目标、范围、切片，并补上"能力：… · 框架：…"一行；`specs/<feature>/design.md` 并入 `docs/architecture.md` 后删掉。然后补一条 `devcircuit ledger add --kind design`（或 `correction`）。
+3. AGENTS.md 照新模板更新第 2、3、5、7 节（`devcircuit context` 路由、命令、分支规则、账本只写不读、审核模型）；可以删掉 `.dev-circuit/reviewer.json`。
+4. `devcircuit vendor` 更新两个检查器；装过 hook 的项目用 `devcircuit hooks install … --force` 换上新的拦截提示。
+5. 最后 `devcircuit sync` 同步新版技能。
+
 ## 0.5.0
 
 - 脚手架：`.gitignore` 带上常见的缓存和依赖目录；文档地图不再把还不存在的 `architecture.md` 写成已有；AGENTS 模板注明检查器直接运行、规则用 `--list-rules` 看，不读源码。
