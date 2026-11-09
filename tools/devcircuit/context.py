@@ -25,10 +25,11 @@ CURRENT_SLICE = re.compile(r"^-\s+(S\d+[：:].*?)\s*[（(]当前[）)]")
 SLICE = re.compile(r"^-\s+(S\d+[：:].*)$")
 CAPABILITY_LINE = re.compile(r"^能力[：:]\s*(.*)$")
 TRUNK_LINE = re.compile(  # "- 主干：`main`", "1. **主干**: main", "**主干：** main", or "| 主干 | main |"
-    r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\*\*)?主干(?:\*\*)?[ \t]*[：:][ \t]*(?:\*\*)?(?P<value>[^\n]*)$"
-    r"|^[ \t]*\|[ \t]*(?:\*\*)?主干(?:\*\*)?[ \t]*\|(?P<cell>[^|\n]*)\|",
+    # [^\S\n] is any whitespace but a newline: full-width and no-break spaces count, as they do in Chinese text.
+    r"^[^\S\n]*(?:(?:[-*+]|\d+[.)])[^\S\n]+)?(?:\*\*)?主干(?:\*\*)?[^\S\n]*[：:][^\S\n]*(?:\*\*)?(?P<value>[^\n]*)$"
+    r"|^[^\S\n]*\|[^\S\n]*(?:\*\*)?主干(?:\*\*)?[^\S\n]*\|(?P<cell>[^|\n]*)\|",
     re.MULTILINE)
-TRUNK_NAME = re.compile(r"[ \t]*(?:\*\*)?`?([^\s`（(，,。；;|*]+)")
+TRUNK_NAME = re.compile(r"\s*(?:\*\*)?`?([^\s`（(，,。；;|*]+)")
 CODE_WORD = re.compile(r"(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])")
 MAX_TITLE = 160
 MAX_LISTED_IDS = 10

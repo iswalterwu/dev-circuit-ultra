@@ -277,7 +277,8 @@ def test_a_trunk_agents_names_must_exist(tmp_path: Path, capsys) -> None:
 def test_the_trunk_line_is_read_in_common_markdown_shapes(tmp_path: Path) -> None:
     """A trunk line the tool cannot read silently falls back to another branch: the wrong base."""
     for line in ("- **主干**：`workbench`", "1. 主干：workbench", "+ 主干：`workbench`",
-                 "- 主干 ：workbench", "**主干：** `workbench`", "| 主干 | `workbench` |"):
+                 "- 主干 ：workbench", "**主干：** `workbench`", "| 主干 | `workbench` |",
+                 "　　主干：`workbench`", "- 主干：　`workbench`", "- 主干： workbench"):
         write(tmp_path, "AGENTS.md", f"# 项目\n\n{line}\n")
         assert context_module.named_trunk(tmp_path) == "workbench", line
 
