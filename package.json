@@ -1,6 +1,6 @@
 {
   "name": "dev-circuit-ultra",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Less context. Less ceremony. One feature at a time. A design-first development flow for coding agents.",
   "type": "module",
   "main": "index.js",

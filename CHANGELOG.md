@@ -2,7 +2,7 @@
 
 只记对使用者有影响的变化。版本号对应 git tag；`doc_guard` / `spec_check` 的脚本版本是各自独立的一条线，不跟包版本走。
 
-## 未发布
+## 0.6.1
 
 - `devcircuit` 的报错也用 UTF-8 输出：中文 Windows 上用管道接走输出（如 `devcircuit ledger check 2>&1 | head`）时，报错不再是乱码；路径里有编不了码的字符时，照样给出可读的报错，不打堆栈。
 - 基线可以写在 AGENTS.md 里：`context`、`ledger check`、`close` 不带 `--base` 时，先取 AGENTS.md 里"主干"一行写的分支（本地没有就用 origin 上的）；没写就和以前一样取 `main` / `master`，两个都没有才用远端默认分支（origin/HEAD）。写了主干却找不到，或这一行没写分支名，直接报错，不悄悄换成别的分支；列表、加粗、表格几种写法都认。AGENTS 模板第 5 节加了"主干"一行；`devcircuit init --adopt` 依次按远端默认分支、本地的 `main` / `master`、当前分支（`feat/` 分支除外）填写，看不出来就不写，并在输出里说明填了什么。`migrate --check` 会列出没写主干、远端默认分支又和默认基线不一致的项目。
