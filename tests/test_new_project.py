@@ -136,3 +136,22 @@ def test_adopt_requires_git_repository(tmp_path):
 
     assert result.returncode != 0
     assert not (folder / "AGENTS.md").exists()
+
+
+def test_forwarders_keep_an_existing_pythonpath_on_every_platform(tmp_path):
+    # The pwsh forwarders prepend tools/ to PYTHONPATH. A hard-coded ";" only separates paths on
+    # Windows; on Linux and macOS it glued both entries into one path and the import failed.
+    for script in (SCRIPT, ROOT / "skills" / "dev-circuit-ultra" / "scripts" / "new-ledger.ps1",
+                   ROOT / "sync.ps1"):
+        text = script.read_text(encoding="utf-8")
+        assert "$tools;$env:PYTHONPATH" not in text, script.name
+        assert "[IO.Path]::PathSeparator" in text, script.name
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    result = subprocess.run(
+        [PWSH, "-NoProfile", "-File", str(SCRIPT), "-Path", str(tmp_path / "app"), "-Name", "App"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env={**os.environ, **GIT_IDENTITY, "PYTHONPATH": str(elsewhere)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

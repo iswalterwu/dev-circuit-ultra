@@ -1,9 +1,9 @@
 # Strong isolation reference:
-#   dev        -> project only; no ledger mount, no ledger credentials
-#   archivist  -> project read-only + ledger write
-#   ledger     -> ledger read-only for human query
+#   dev     -> project only; no ledger mount, no ledger credentials
+#   ledger  -> project read-only + ledger read-write; the human records and checks here
 #
-# Set LEDGER_DIR to the private ledger repo created by new-ledger.ps1.
+# Set LEDGER_DIR to the private ledger repo created by `devcircuit ledger init`,
+# and PROJECT_NAME to the project's directory name under entries/ in the ledger.
 # The ledger must be OUTSIDE the project directory.
 
 services:
@@ -23,11 +23,11 @@ services:
       HOME: /home/dev
     command: sleep infinity
 
-  archivist:
+  ledger:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    user: archivist
+    user: ledger
     working_dir: /work
     init: true
     security_opt:
@@ -35,28 +35,13 @@ services:
     volumes:
       - ..:/work:ro
       - ${LEDGER_DIR:?Set LEDGER_DIR to the private ledger repo}:/ledger
-      - archivist-home:/home/archivist
+      - ledger-home:/home/ledger
     environment:
-      HOME: /home/archivist
-    command: sleep infinity
-
-  ledger:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    user: archivist
-    working_dir: /ledger
-    init: true
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - ${LEDGER_DIR:?Set LEDGER_DIR to the private ledger repo}:/ledger:ro
-      - ledger-home:/home/archivist
-    environment:
-      HOME: /home/archivist
+      HOME: /home/ledger
+      DEVCIRCUIT_LEDGER: /ledger
+      DEVCIRCUIT_PROJECT: ${PROJECT_NAME:?Set PROJECT_NAME to the project name used in the ledger}
     command: sleep infinity
 
 volumes:
   dev-home:
-  archivist-home:
   ledger-home:

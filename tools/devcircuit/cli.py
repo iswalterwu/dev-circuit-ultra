@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from . import close as close_module
+from . import context as context_module
+from . import ledger as ledger_module
+from . import migrate as migrate_module
 from ._loader import asset_path, load_script, script_path
 from .scaffold import ScaffoldError, init_ledger, init_project
 from .sync import sync as sync_skills
@@ -251,6 +255,88 @@ def _hook_status(args) -> int:
     return 0
 
 
+def _context(args) -> int:
+    out = _out()
+    root = Path(args.root).resolve()
+    if not root.is_dir():
+        print(f"项目目录不存在：{root}", file=sys.stderr)
+        return 2
+    try:
+        if args.map:
+            code, text = 0, context_module.render_map(root)
+        elif args.capability:
+            code, text = context_module.render_capability(root, args.capability)
+        elif args.ids:
+            ids = [item for item in ledger_module.ID_SEPARATORS.split(args.ids) if item]
+            code, text = context_module.render_ids(root, ids, args.max_chars)
+        else:
+            feature = args.feature or args.review
+            code, text = 0, context_module.render_feature(root, feature, args.base, bool(args.review),
+                                                          args.max_chars)
+    except context_module.ContextError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print(text, file=out)
+    return code
+
+
+def _ledger(args) -> int:
+    out = _out()
+    command = args.ledger_command or ("init" if args.path else None)
+    if command is None:
+        print("用法：devcircuit ledger init --path <目录> | ledger add … | ledger check", file=sys.stderr)
+        return 2
+    if command == "init":
+        return _scaffold(lambda: init_ledger(Path(args.path), not args.no_commit))
+    project = Path(args.project).resolve()
+    try:
+        if command == "add":
+            record_id, committed = ledger_module.add(
+                project, args.feature, args.kind, args.decision, args.rejected, args.reason,
+                args.ids, args.removed_ids, args.review, args.commit)
+            print(f"已记录：{record_id}", file=out)
+            if not committed:
+                print("提醒：记录已写入，但账本仓库没有提交成功；请人工检查账本仓库的 git 身份和状态。", file=out)
+            return 0
+        findings, records, features = ledger_module.check(project, args.base)
+    except ledger_module.LedgerError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    for finding in findings:
+        print(finding.text, file=out)
+    if findings:
+        print(f"ledger check：{len(findings)} 处不一致", file=out)
+        return 1
+    print(f"ledger check：通过（{records} 条记录，{features} 个功能）", file=out)
+    return 0
+
+
+def _close(args) -> int:
+    out = _out()
+    project = Path(args.project).resolve()
+    try:
+        return close_module.run(project, args.feature, args.summary, args.review, args.base, out)
+    except (close_module.CloseError, ledger_module.LedgerError) as error:
+        print(str(error), file=sys.stderr)
+        return 2
+
+
+def _migrate(args) -> int:
+    out = _out()
+    project = Path(args.project).resolve()
+    if not project.is_dir():
+        print(f"项目目录不存在：{project}", file=sys.stderr)
+        return 2
+    actions = migrate_module.check(project)
+    if not actions:
+        print("迁移检查：没有要改的", file=out)
+        return 0
+    print(f"迁移检查：{len(actions)} 项要处理（只列出，没有改任何文件）", file=out)
+    for number, action in enumerate(actions, 1):
+        print(f"{number}. {action}", file=out)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     _out()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -271,16 +357,58 @@ def main(argv: list[str] | None = None) -> int:
     vendor = sub.add_parser("vendor", help="把两个检查器拷进项目的 scripts/，已有则升级")
     vendor.add_argument("--project", default=".", help="项目目录（默认当前目录）")
 
+    context = sub.add_parser("context", help="按需取现行设计：能力清单、要求原文、某个功能的上下文")
+    mode = context.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--map", action="store_true", help="能力清单、在研功能、框架摘要位置、其他文档、待做数")
+    mode.add_argument("--capability", metavar="CODE", help="某个能力的要求清单（每条一行）")
+    mode.add_argument("--ids", metavar="ID[,ID...]", help="这些要求的原文和例子")
+    mode.add_argument("--feature", metavar="NAME", help="功能的卡、分支改到或引用到的要求、相关测试")
+    mode.add_argument("--review", metavar="NAME", help="同 --feature，另加基线和改动统计，交给审核")
+    context.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
+    context.add_argument("--root", default=".", help="项目目录（默认当前目录）")
+    context.add_argument("--max-chars", type=int, default=context_module.DEFAULT_MAX_CHARS,
+                         help="要求原文部分的字数上限，超出时截断并列出没给的编号")
+
+    close = sub.add_parser("close", help="收尾一个功能：检查、账本核对、删卡并提交、写收尾记录、给出交付报告骨架")
+    close.add_argument("feature", help="功能名，和 specs/<feature>/ 一致")
+    close.add_argument("--summary", required=True, help="一句话说明交付了什么")
+    close.add_argument("--review", default=None, help="审核结果，一句话")
+    close.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
+    close.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+
+    migrate = sub.add_parser("migrate", help="升级前检查：列出旧项目要改的地方，不改任何文件")
+    migrate.add_argument("--check", action="store_true", required=True, help="只检查并列出（目前唯一的模式）")
+    migrate.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+
     init = sub.add_parser("init", help="新建项目骨架，或给已有仓库补齐文件")
     init.add_argument("--path", required=True, help="目标目录")
     init.add_argument("--name", default=None, help="项目名（默认取目录名）")
     init.add_argument("--adopt", action="store_true", help="接入已有 Git 仓库：只补缺失文件，不提交")
 
-    ledger = sub.add_parser("ledger", help="在项目之外创建私有账本仓库")
-    ledger.add_argument("--path", required=True, help="账本目录（必须在项目之外）")
-    ledger.add_argument("--no-commit", action="store_true", help="不创建第一次提交")
+    ledger = sub.add_parser("ledger", help="项目外的私有账本：init 建库，add 只追加，check 核对")
+    ledger.add_argument("--path", help=argparse.SUPPRESS)
+    ledger.add_argument("--no-commit", action="store_true", help=argparse.SUPPRESS)
+    ledger_sub = ledger.add_subparsers(dest="ledger_command")
+    ledger_init = ledger_sub.add_parser("init", help="在项目之外创建私有账本仓库")
+    ledger_init.add_argument("--path", required=True, help="账本目录（必须在项目之外）")
+    ledger_init.add_argument("--no-commit", action="store_true", help="不创建第一次提交")
+    ledger_add = ledger_sub.add_parser("add", help="追加一条记录；只回执编号，不显示账本内容")
+    ledger_add.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    ledger_add.add_argument("--feature", required=True, help="功能名，和 specs/<feature>/ 一致")
+    ledger_add.add_argument("--kind", required=True, choices=ledger_module.KINDS)
+    ledger_add.add_argument("--decision", required=True, help="选定的决定，一句话")
+    ledger_add.add_argument("--rejected", action="append", default=[], metavar="方案：原因",
+                            help="被否的方案和原因（可重复）")
+    ledger_add.add_argument("--reason", default=None, help="为什么这样定")
+    ledger_add.add_argument("--ids", default=None, help="涉及的要求编号，逗号分隔")
+    ledger_add.add_argument("--removed-ids", default=None, help="删掉的要求编号，逗号分隔")
+    ledger_add.add_argument("--review", default=None, help="审核结果，一句话")
+    ledger_add.add_argument("--commit", default=None, help="对应的提交（默认 HEAD）")
+    ledger_check = ledger_sub.add_parser("check", help="核对账本和项目；只报不一致的功能、编号和提交")
+    ledger_check.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    ledger_check.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
 
-    sync = sub.add_parser("sync", help="把三个技能同步到 Claude Code / agents / DSH 目录")
+    sync = sub.add_parser("sync", help="把技能同步到 Claude Code / agents / DSH 目录，并移除已退役的技能")
     sync.add_argument("--target", action="append", default=[], metavar="DIR",
                       help="额外或替代的目标目录（可重复；不给就用默认三处）")
 
@@ -298,6 +426,9 @@ def main(argv: list[str] | None = None) -> int:
         args, rest = parser.parse_known_args(argv)
     except SystemExit as error:
         return int(error.code or 0)
+    if rest and args.command not in ("doc-guard", "spec-check", "check"):
+        print(f"不认识的参数：{' '.join(rest)}（用 devcircuit {args.command} --help 查看）", file=sys.stderr)
+        return 2
 
     if args.command == "doc-guard":
         return _passthrough("doc_guard", rest)
@@ -309,10 +440,16 @@ def main(argv: list[str] | None = None) -> int:
         return _rules()
     if args.command == "vendor":
         return _vendor(args)
+    if args.command == "context":
+        return _context(args)
+    if args.command == "close":
+        return _close(args)
+    if args.command == "migrate":
+        return _migrate(args)
     if args.command == "init":
         return _scaffold(lambda: init_project(Path(args.path), args.name, args.adopt))
     if args.command == "ledger":
-        return _scaffold(lambda: init_ledger(Path(args.path), not args.no_commit))
+        return _ledger(args)
     if args.command == "sync":
         targets = [Path(item) for item in args.target] or None
         return _scaffold(lambda: sync_skills(targets))

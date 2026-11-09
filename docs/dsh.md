@@ -1,6 +1,6 @@
 # DeepSeek Harness
 
-Dev-circuit-ultra 同时是一个 Pi 包、一个 DSH 插件包，以及三个可单独发布的 skill。三种入口装的是同一份 `skills/`，不要混装同一来源的多个副本。
+Dev-circuit-ultra 同时是一个 Pi 包、一个 DSH 插件包，以及两个可单独发布的 skill。三种入口装的是同一份 `skills/`，不要混装同一来源的多个副本。
 
 ## 兼容性
 
@@ -13,8 +13,8 @@ DSH 的本地 skill provider 只扫描一层目录：
 它不会递归查找 `skills/<name>/SKILL.md`，也不读取 `package.json`。因此：
 
 - **Skill Store / 手动安装**：把单个 `skills/<name>/` 目录放到 `~/.dsh/skills/`、项目 `.dsh/skills/` 或 `~/.agents/skills/`。
-- **DSH 插件安装**：根目录的 `package.json` 声明 `dsh.bundle`，`index.js` 把三个 skill 注册进 `ctx.skills`；一条命令装齐。
-- **Pi 安装**：同一份 `package.json` 声明 `pi.skills`，Pi 从 `skills/` 加载三个 skill。
+- **DSH 插件安装**：根目录的 `package.json` 声明 `dsh.bundle`，`index.js` 把两个 skill 注册进 `ctx.skills`；一条命令装齐。
+- **Pi 安装**：同一份 `package.json` 声明 `pi.skills`，Pi 从 `skills/` 加载两个 skill。
 
 `SKILL.md` frontmatter 使用 DSH 可识别的字段：
 
@@ -24,11 +24,11 @@ description: ...
 whenToUse: ...
 ```
 
-`dev-circuit-archivist` 和 `dev-circuit-ledger` 标记了 `disable-model-invocation: true`：模型不会自动调用它们，human 仍可通过命令显式加载。这是隔离边界的一部分，不要删。
+`dev-circuit-ledger` 标记了 `disable-model-invocation: true`：模型不会自动调用它，human 仍可通过命令显式加载。这是隔离边界的一部分，不要删。开发 agent 写账本不靠技能，而是用 `devcircuit ledger add`（只写不读）。
 
 ## 安装
 
-### 方式 A：DSH 插件（推荐，装齐三个 skill）
+### 方式 A：DSH 插件（推荐，装齐两个 skill）
 
 发布 npm 包后：
 
@@ -45,7 +45,6 @@ dsh plugin --profile web add file:D:\path\to\dev-circuit-ultra
 `cordis.patch.yml` 插入一行插件，`index.js` 在插件挂载时注册：
 
 - `dev-circuit-ultra`（model + human）
-- `dev-circuit-archivist`（human only）
 - `dev-circuit-ledger`（human only）
 
 ### 方式 B：同步到 DSH skill 根目录
@@ -62,13 +61,13 @@ pwsh -NoProfile -File sync.ps1
 $DSH_HOME/skills（未设置时为 ~/.dsh/skills）
 ```
 
-适合不想装 DSH 插件、只想用纯 skill 的用户。
+适合不想装 DSH 插件、只想用纯 skill 的用户。也可以用 `devcircuit sync`，它同时移除已退役的旧技能目录。
 
 ### 方式 C：Skill Store
 
 社区商店 [dsh-skill-store](https://github.com/cxy9204/dsh-skill-store) 从 SkillHub、ClawHub 和 GitHub 镜像安装 skill。装好后在 DSH Web 的 Settings → Skill Store 搜索 `dev-circuit-ultra`，一键写入 `~/.dsh/skills/<name>/SKILL.md`。
 
-商店安装的是单个 skill 目录；三个 skill 需要分别发布/安装。需要一次装齐时用方式 A。
+商店安装的是单个 skill 目录；两个 skill 需要分别发布/安装。需要一次装齐时用方式 A。
 
 ## 发布到商店
 
@@ -87,7 +86,7 @@ clawhub skill publish ./skills/dev-circuit-ultra `
   --topics "agent-skills,workflow,design,code-review,deepseek-harness"
 ```
 
-同伴 skill 用相同命令，把路径和 `--slug` 换成 `dev-circuit-archivist`、`dev-circuit-ledger`。
+同伴 skill 用相同命令，把路径和 `--slug` 换成 `dev-circuit-ledger`。
 
 ### SkillHub
 
@@ -128,7 +127,7 @@ Dev-circuit-ultra
 详情：
 
 ```text
-Dev-circuit-ultra 把功能开发拆成设计澄清、单个切片、实现与验证、独立审核、收尾合并五步。项目里只保留现行设计和能力规格；旧设计原地覆盖或删除；为什么这么做、哪些方案没选，由 human 在项目外的私有账本记录，开发 agent 不读。适合独立开发者用 Claude Code、Codex、pi 或 DeepSeek Harness 连续交付，不想维护 proposal / tasks / archive 的人。
+Dev-circuit-ultra 一次交付一个功能：先识别需求属于在研功能、已有能力还是新能力；框架接不住时先做框架设计，再做功能设计，都澄清到用户说“定了”；然后切片实现，每个功能一次独立审核加一轮修复，最后验收、收尾、交付报告。项目里只保留现行设计和能力规格，旧设计原地覆盖或删除；为什么这么做、哪些方案没选，写进项目外的私有账本，开发 agent 只写不读，devcircuit ledger check 核对两边一致。适合独立开发者用 Claude Code、Codex、pi 或 DeepSeek Harness 连续交付，不想维护 proposal / tasks / archive 的人。
 ```
 
 标签：
@@ -141,6 +140,6 @@ agent-skills, workflow, design, code-review, spec-driven-development, deepseek-h
 
 - `python -m pytest -q` 通过。
 - `npm pack --dry-run` 包含 `index.js`、`cordis.patch.yml`、`skills/` 和 README。
-- 在干净的 DSH profile 中执行 `dsh plugin --profile web add <包>`，确认三个 skill 出现在目录里。
-- `dev-circuit-archivist` / `dev-circuit-ledger` 不出现在模型自动调用目录中。
+- 在干净的 DSH profile 中执行 `dsh plugin --profile web add <包>`，确认两个 skill 出现在目录里。
+- `dev-circuit-ledger` 不出现在模型自动调用目录中。
 - 只把 `skills/<name>/` 发布到商店，不要把整个仓库根目录当作单个 skill 发布。

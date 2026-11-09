@@ -245,3 +245,51 @@ def test_legacy_reference_must_exist(tmp_path):
     assert [(f.rule, f.message) for f in scan(tmp_path)] == [
         ("dangling-ref", "引用的编号不存在：DEMO:AC-009-9"),
     ]
+
+
+def _git(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                          encoding="utf-8", check=True)
+
+
+def test_code_before_design_on_a_feature_branch(tmp_path):
+    # On feat/<name>, code may change only after the card exists: the card is written once the user settles the design.
+    write(tmp_path, "specs/backlog.md", "# 待做池\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    write(tmp_path, "src/app.py", "print(1)\n")
+    assert scan(tmp_path) == []
+
+    _git(tmp_path, "switch", "-q", "-c", "feat/export")
+    findings = scan(tmp_path)
+    assert [(finding.rule, finding.path) for finding in findings] == [
+        ("code-before-design", "specs/export/spec.md")]
+    assert "src/app.py" in findings[0].message
+
+    write(tmp_path, "specs/export/spec.md", "# export\n")
+    assert scan(tmp_path) == []
+
+
+def test_code_before_design_needs_a_dev_circuit_git_project(tmp_path):
+    write(tmp_path, "src/app.py", "print(1)\n")
+    assert scan(tmp_path) == []                          # not a git repository
+    _git(tmp_path, "init", "-q", "-b", "feat/export")
+    assert scan(tmp_path) == []                          # no specs/: not a dev-circuit-ultra project
+    write(tmp_path, "specs/backlog.md", "# 待做池\n")
+    assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]
+    assert scan(tmp_path, ignored_rules=["code-before-design"]) == []
+    assert scan(tmp_path, ignores=["src"]) == []         # ignored paths do not count as code changes
+
+
+def test_code_before_design_explains_a_branch_name_it_cannot_map(tmp_path):
+    write(tmp_path, "specs/backlog.md", "# 待做池\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    _git(tmp_path, "switch", "-q", "-c", "feat/ui/login")
+    write(tmp_path, "src/app.py", "print(1)\n")
+
+    findings = scan(tmp_path)
+    assert [finding.rule for finding in findings] == ["code-before-design"]
+    assert "feat/ui/login" in findings[0].message and "功能名" in findings[0].message

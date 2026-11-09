@@ -82,9 +82,16 @@ def test_walkthrough_normal_and_framework(tmp_path):
     # The framework structure is written once, straight into docs/architecture.md; no feature design doc.
     architecture = write(root, "docs/architecture.md", """# 结构
 
-入口 → 同步服务 → 内存仓库；依赖只能单向。
-记录由内存仓库拥有，只有仓库写入。由仓库统一写入的理由：保持单一数据归属。
-sync(records) 返回写入数量，非法记录抛 ValueError；本地同步调用无远程超时，接口版本为 v1。
+<a id="summary"></a>
+## 框架摘要
+
+- 模块：入口 → 同步服务 → 内存仓库；依赖只能单向。
+- 数据归属：记录由内存仓库拥有，只有仓库写入。
+- 契约：sync(records) 返回写入数量，非法记录抛 ValueError；接口版本为 v1。
+
+## 细节
+
+由仓库统一写入的理由：保持单一数据归属。本地同步调用无远程超时。
 相关行为要求见 [同步能力](requirements/sync.md) 的 SYNC-1；导出行为见 [导出能力](requirements/demo.md) 的 DEMO-1、DEMO-2。
 """)
     write(root, "docs/README.md", """# 文档地图

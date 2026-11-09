@@ -37,6 +37,7 @@ def test_blocks_ledger_read(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "账本边界" in result.stderr.decode("utf-8")
     assert "绕开" in result.stderr.decode("utf-8")  # the skill leaves this guidance to the block message
+    assert "devcircuit ledger add" in result.stderr.decode("utf-8")
 
 
 def test_blocks_bash_that_names_the_ledger(tmp_path: Path) -> None:

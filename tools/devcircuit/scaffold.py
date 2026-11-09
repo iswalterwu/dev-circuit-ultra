@@ -195,5 +195,6 @@ def init_ledger(path: Path, commit: bool = True) -> int:
     out = sys.stdout
     print(f"账本：{root}", file=out)
     print("这是私有仓库：请添加私有 remote，不要把开发容器挂载到这里。", file=out)
-    print("下一步：在 dev-circuit-archivist 容器里挂载它；开发容器不要挂载。", file=out)
+    print("下一步：devcircuit hooks install --harness <pi|claude> --project <项目> --ledger <账本>；"
+          "之后开发 agent 只用 devcircuit ledger add 写、devcircuit ledger check 核对。", file=out)
     return 0

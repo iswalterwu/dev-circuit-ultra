@@ -68,6 +68,7 @@ def test_blocks_ledger_access(tmp_path: Path) -> None:
         assert result is not None and result["block"] is True
         assert "账本边界" in result["reason"]
         assert "绕开" in result["reason"]  # the skill leaves this guidance to the block message
+        assert "devcircuit ledger add" in result["reason"]
 
 
 def test_allows_normal_work(tmp_path: Path) -> None:

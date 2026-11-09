@@ -1,6 +1,6 @@
-"""doc_guard v0.3.0
+"""doc_guard v0.4.0
 
-用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径和断链。
+用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径、断链，以及 agent 整份读入的文件有没有超出体积上限。
 用法：python doc_guard.py [--root DIR] [--json] [--ignore GLOB]... [--ignore-rule RULE]...
 输出：每个问题一行；没有问题时打印一行"通过"和检查了多少份文档。--list-rules 列出每条规则查什么。
 退出码：0 无问题；1 有问题；2 根目录不存在或参数错误。
@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -37,6 +37,8 @@ RULES = (
     "long-hash",
     "short-hash",
     "broken-link",
+    "oversize",
+    "arch-summary",
 )
 
 BOOKKEEPING_PHRASES = (
@@ -70,12 +72,19 @@ FORBIDDEN_DIRS = frozenset({
     "openspec/changes/archive", "ledger", "docs/ledger",
 })
 FORBIDDEN_SPEC_FILES = frozenset({"plan.md", "tasks.md", "checklist.md", "review.md"})
+# Files an agent reads whole stay small enough to read whole.
+SPEC_MAX_LINES = 400
+CARD_MAX_LINES = 80
+SUMMARY_MAX_LINES = 60
+ARCHITECTURE = "docs/architecture.md"
 
 DECISION_ID = re.compile(r"\b(?:D-\d{3}|ADR-\d+)\b")
 LONG_HASH = re.compile(r"\b[0-9a-f]{32,64}\b")
 SHORT_HASH = re.compile(r"(?<![#\w-])[0-9a-f]{7,12}(?![\w-])")
 INLINE_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+SUMMARY_ANCHOR = re.compile(r"<a\s+id=[\"']summary[\"']")
+HEADING = re.compile(r"^(#{1,6})\s")
 
 # What --list-rules prints, built from the constants above so it cannot drift from them.
 RULE_HELP = {
@@ -87,6 +96,10 @@ RULE_HELP = {
     "long-hash": "文档里出现 32–64 位小写十六进制串",
     "short-hash": "文档里出现 7–12 位、同时含数字和字母的小写十六进制串（像提交号）",
     "broken-link": "Markdown 链接的相对路径指向不存在的文件（不查 http(s)、mailto、# 锚点和绝对路径）",
+    "oversize": f"能力规格（docs/requirements/ 下除 README.md 外的 .md）超过 {SPEC_MAX_LINES} 行，"
+                f"或卡（specs/<功能>/spec.md）超过 {CARD_MAX_LINES} 行",
+    "arch-summary": f"{ARCHITECTURE} 没有用 <a id=\"summary\"></a> 标出的框架摘要，"
+                    f"或摘要超过 {SUMMARY_MAX_LINES} 个非空行（到下一个同级标题为止）",
 }
 SCOPE = ("范围：根目录和 docs/、specs/、design/ 下的 .md，第二、三层目录里的 README.md，以及 --include 指定的 .md；"
          "代码围栏里的内容和 doc-guard:ignore / off 标出的行不查。")
@@ -261,6 +274,46 @@ def _scan_document(document: Path, root: Path) -> list[Finding]:
     return findings
 
 
+def _summary_findings(relative: str, lines: list[str]) -> list[Finding]:
+    """The summary runs from its anchor to the next heading of the same or a higher level."""
+    anchor = next((index for index, line in enumerate(lines) if SUMMARY_ANCHOR.search(line)), None)
+    if anchor is None:
+        return [Finding("arch-summary", relative, 1,
+                        f'没有框架摘要：在开头用 <a id="summary"></a> 标出，不超过 {SUMMARY_MAX_LINES} 行')]
+    level, start = 2, anchor + 1
+    heading = HEADING.match(lines[anchor])
+    if not heading:
+        following = next((index for index in range(anchor + 1, len(lines)) if lines[index].strip()), None)
+        if following is not None and (heading := HEADING.match(lines[following])):
+            start = following + 1
+    if heading:
+        level = len(heading.group(1))
+    end = next((index for index in range(start, len(lines))
+                if (match := HEADING.match(lines[index])) and len(match.group(1)) <= level), len(lines))
+    count = sum(1 for line in lines[start:end] if line.strip())
+    if count > SUMMARY_MAX_LINES:
+        return [Finding("arch-summary", relative, anchor + 1,
+                        f"框架摘要 {count} 行，超过 {SUMMARY_MAX_LINES} 行：只留模块、数据归属、契约和约束，细节放正文")]
+    return []
+
+
+def _scan_shape(document: Path, root: Path) -> list[Finding]:
+    relative = document.relative_to(root)
+    lines = document.read_text(encoding="utf-8", errors="replace").splitlines()
+    parts = relative.parts
+    if parts[:2] == ("docs", "requirements") and len(parts) == 3 and relative.name != "README.md":
+        if len(lines) > SPEC_MAX_LINES:
+            return [Finding("oversize", relative.as_posix(), SPEC_MAX_LINES + 1,
+                            f"能力规格 {len(lines)} 行，超过 {SPEC_MAX_LINES} 行：按子能力拆成几份")]
+    elif len(parts) == 3 and parts[0] == "specs" and relative.name == "spec.md":
+        if len(lines) > CARD_MAX_LINES:
+            return [Finding("oversize", relative.as_posix(), CARD_MAX_LINES + 1,
+                            f"卡 {len(lines)} 行，超过 {CARD_MAX_LINES} 行：把做完的切片收成一行")]
+    elif relative.as_posix() == ARCHITECTURE:
+        return _summary_findings(relative.as_posix(), lines)
+    return []
+
+
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
          use_ignore_file: bool = True, includes=()) -> list[Finding]:
     """Report forbidden paths and content under a project root.
@@ -287,6 +340,7 @@ def _scan(root: Path, ignores, ignored_rules, ignore_file, use_ignore_file: bool
     documents = _walk(root, root, findings, patterns, includes)
     for document in documents:
         findings.extend(_scan_document(document, root))
+        findings.extend(_scan_shape(document, root))
 
     ignored = set(ignored_rules)
     if ignored:
