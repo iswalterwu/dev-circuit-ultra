@@ -13,11 +13,11 @@ def read(relative: str) -> str:
 
 def test_every_file_the_skill_names_exists():
     skill = read("SKILL.md")
-    for name in ("setup.md", "framework.md", "reviewer.md"):
+    for name in ("setup.md", "framework.md", "large.md", "reviewer.md"):
         assert f"`{name}`" in skill and (SKILL / name).is_file()
 
     text = skill + "".join(read(name) for name in (
-        "setup.md", "framework.md", "reviewer.md", "templates/AGENTS.md"))
+        "setup.md", "framework.md", "large.md", "reviewer.md", "templates/AGENTS.md"))
     named = set(re.findall(r"templates/[\w./-]+\.md", text))
 
     assert named
@@ -33,11 +33,13 @@ def test_every_request_is_classified_before_design():
 
 
 def test_design_waits_for_the_users_go_ahead():
-    # Both design modes stop after the summary; nothing is written before the user settles it.
+    # Both design modes stop after the summary. Before the user settles it only drafts are written, so what
+    # the user approves is the text that gets committed; nothing is committed and no code changes.
     for name in ("SKILL.md", "framework.md"):
         text = read(name)
         assert "结束本轮回复" in text
-        assert "之前不写文件、不改代码" in text
+        assert "的草稿，不提交、不改代码" in text
+        assert "之前不写文件" not in text
 
 
 def test_a_reply_that_answers_or_adds_is_not_the_go_ahead():
@@ -142,3 +144,32 @@ def test_compatibility_keeps_old_inputs_working_and_allows_readable_errors():
     assert "以前能成功的输入照样成功" in skill
     assert "把崩溃改成可读错误不算破坏兼容" in skill
     assert "不算破坏兼容" in read("reviewer.md")
+
+
+def test_big_work_is_split_and_key_features_get_more_review():
+    # agent-dock: the user approved 370 lines "as recommended"; the independent design review found the gaps,
+    # and most implementation fixes were failure paths, state boundaries and real contracts.
+    skill, large, reviewer = read("SKILL.md"), read("large.md"), read("reviewer.md")
+    assert "12 条" in skill and "3 份" in skill and "重点功能" in skill
+    assert "拆分方案" in large
+    for mode in ("要求审", "骨架审"):
+        assert mode in large and mode in reviewer
+    assert "构建者检查" in reviewer.split("## 要求审")[1]
+    assert "重点：" in read("templates/spec.md")
+
+
+def test_framework_changes_get_a_structure_review_by_default():
+    framework, reviewer = read("framework.md"), read("reviewer.md")
+    assert "结构审" in framework and "用户明说不审才跳过" in framework
+    assert "用户要求才做" not in reviewer
+
+
+def test_visual_changes_start_with_a_prototype():
+    skill = read("SKILL.md")
+    assert "视觉密集" in skill and "真实数据截图" in skill
+
+
+def test_the_goal_puts_review_quality_before_cost():
+    # Validation: cost about level with OpenSpec, review the main source of quality; the user chose quality.
+    skill = read("SKILL.md")
+    assert "质量优先" in skill and "成本低于 OpenSpec" not in skill

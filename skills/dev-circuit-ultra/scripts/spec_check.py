@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -66,7 +66,7 @@ RULE_HELP = {
                   "代号在别的能力规格里已用过，或要求编号的前缀和本文件代号不符",
     "dup-id": "同一个要求编号定义了不止一次（跨文件也算）",
     "dangling-ref": "代码或测试里引用的要求编号（前缀是已声明的代号），在能力规格里不存在",
-    "code-before-design": "在 feat/<功能> 分支上改了代码（已暂存、未暂存或未跟踪），但 specs/<功能>/spec.md 还不存在；"
+    "code-before-design": "在 feat/<功能> 分支上改了代码（已暂存、未暂存或未跟踪），但 specs/<功能>/spec.md 还没提交；"
                           "只在有 specs/ 目录的 git 仓库里查",
 }
 SCOPE = ("范围：docs/requirements/ 下除 README.md 外的 .md；引用在这些后缀的文件里找："
@@ -239,7 +239,7 @@ def _git_lines(root: Path, *args: str) -> list[str] | None:
 
 
 def _design_gate(root: Path, patterns) -> list[Finding]:
-    """On feat/<name>, code changes need the card that the settled design produces first."""
+    """On feat/<name>, code changes need the committed card: drafts are committed once the design is settled."""
     if not (root / "specs").is_dir():
         return []
     branch = _git_lines(root, "symbolic-ref", "--short", "-q", "HEAD")
@@ -260,11 +260,11 @@ def _design_gate(root: Path, patterns) -> list[Finding]:
                         f"分支 {branch[0]} 对不上卡：功能名只用字母、数字、点、下划线和连字符，一段，不含斜杠；"
                         "改用 feat/<功能名>，卡放在 specs/<功能名>/spec.md")]
     card = f"specs/{feature}/spec.md"
-    if (root / card).is_file():
+    if _git_lines(root, "cat-file", "-e", f"HEAD:./{card}") is not None:  # committed, so the design is settled
         return []
     return [Finding("code-before-design", card, 0,
-                    f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但还没有卡："
-                    "用户说“定了”之后先写能力规格和卡、提交设计，再写代码")]
+                    f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但卡还没提交："
+                    "定了之前只写能力规格和卡的草稿；用户说“定了”之后先提交设计，再写代码")]
 
 
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,

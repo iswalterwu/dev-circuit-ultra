@@ -127,7 +127,7 @@ Dev-circuit-ultra
 详情：
 
 ```text
-Dev-circuit-ultra 一次交付一个功能：先识别需求属于在研功能、已有能力还是新能力；框架接不住时先做框架设计，再做功能设计，都澄清到用户说“定了”；然后切片实现，每个功能一次独立审核加一轮修复，最后验收、收尾、交付报告。项目里只保留现行设计和能力规格，旧设计原地覆盖或删除；为什么这么做、哪些方案没选，写进项目外的私有账本，开发 agent 只写不读，devcircuit ledger check 核对两边一致。适合独立开发者用 Claude Code、Codex、pi 或 DeepSeek Harness 连续交付，不想维护 proposal / tasks / archive 的人。
+Dev-circuit-ultra 一次交付一个功能：先识别需求属于在研功能、已有能力还是新能力；框架接不住时先做框架设计，再做功能设计，都澄清到用户说“定了”，批的就是写好的要求条文；大功能先拆。然后切片实现，每个功能验收前一次独立审核，重点功能和框架改动多审，必须改的修一轮，最后验收、收尾、交付报告。项目里只保留现行设计和能力规格，旧设计原地覆盖或删除；为什么这么做、哪些方案没选，写进项目外的私有账本，开发 agent 只写不读，devcircuit ledger check 核对两边一致。适合独立开发者用 Claude Code、Codex、pi 或 DeepSeek Harness 连续交付，不想维护 proposal / tasks / archive 的人。
 ```
 
 标签：

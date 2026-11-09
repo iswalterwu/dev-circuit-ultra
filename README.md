@@ -26,10 +26,10 @@ request → ① Classify ─┬─ continue or correct a feature in progress ─
 ```
 
 1. **Classify**: `devcircuit context --map` lists the capabilities, the features in progress and where the framework summary is. Decide whether the request continues a feature in progress, changes an existing capability, adds a new one or fixes a bug. New capabilities and capability changes go through four fit questions: who owns the data, do the current extension points and contracts suffice, is a new dependency or persistence structure needed, does it break a framework constraint.
-2. **Framework design** (when the framework cannot take it): name the gap, offer two or three structures with trade-offs and a recommendation, and clarify until the user says it is settled. The structure goes into `docs/architecture.md`, which opens with a framework summary of at most 60 lines.
-3. **Feature design**: send a design summary in the conversation (requirement changes with examples; every new command or interface gets at least one failure requirement). Nothing is written and no code changes until the user settles it. Then branch to `feat/<feature>`, edit the capability spec, write the card, and record the decision and the rejected options with `devcircuit ledger add`.
+2. **Framework design** (when the framework cannot take it): name the gap, offer two or three structures with trade-offs and a recommendation, and clarify until the user is ready to settle it. The chosen structure is drafted into `docs/architecture.md`, which opens with a framework summary of at most 60 lines, and an independent structure review checks the draft before the user settles it.
+3. **Feature design**: on a `feat/<feature>` branch, draft the requirement text in the capability spec and start the card; every new command or interface gets at least one failure requirement. Then send a design summary in the conversation, one line per requirement change. Nothing is committed and no code changes until the user settles it; then the drafts are committed and the decision and the rejected options are recorded with `devcircuit ledger add`. More than 12 requirement changes, or three or more capability specs: propose a split first.
 4. **Build**: each session starts with `devcircuit context --feature <feature>` and reads only the card, the requirement text this feature touches and the related tests. One end-to-end slice at a time; tests carry the requirement IDs they prove.
-5. **Review + one fix round**: when the feature is done and before acceptance, a read-only reviewer in a fresh context reviews once and exercises the failure paths first. Must-fix items get one fix round and one re-check.
+5. **Review + one fix round**: when the feature is done and before acceptance, a read-only reviewer in a fresh context reviews once and exercises the failure paths first. Key features (over the split threshold but not split, or touching a risk item) also get a requirement review before they are settled and a skeleton review after the first slice. Must-fix items get one fix round and one re-check each time.
 6. **Deliver**: after the user accepts, `devcircuit close` runs the checks, cross-checks the ledger, deletes the card, commits, and records the close. The final reply is the delivery report: what changed, how to verify, review result, potential issues, next steps.
 
 The user takes part in three places only: framework clarification (when needed), feature clarification, and acceptance.
@@ -83,7 +83,7 @@ devcircuit rules                          # what every rule checks
 ```
 
 - `doc_guard`: forbidden paths (`ledger/`, `docs/adr` and more), history phrases, decision IDs, hashes, broken links; capability specs over 400 lines, cards over 80 lines, a missing framework summary or one over 60 lines.
-- `spec_check`: codes and IDs, duplicate IDs, dangling references in code and tests; on a `feat/<feature>` branch, code changes before the card exists are reported as `code-before-design`.
+- `spec_check`: codes and IDs, duplicate IDs, dangling references in code and tests; on a `feat/<feature>` branch, code changes before the card is committed are reported as `code-before-design`.
 - `--ignore GLOB`, `.dcuignore`, `--ignore-rule NAME` and inline `doc-guard:ignore` / `off` / `on` whitelist false positives; `--include GLOB` scans extra `.md` files outside the default scope.
 - Pure Python 3.10+, no dependencies; CI runs on Windows and Ubuntu.
 
@@ -134,7 +134,7 @@ The demo creates a throwaway project and an external ledger and walks one featur
 | Design | proposal / design / tasks / spec delta, kept after archiving | capability specs and `docs/architecture.md` edited in place; the card is deleted at close |
 | Decision history | in the change and the archive, inside the repo | private ledger outside the project; the agent writes but never reads it, `ledger check` keeps it consistent |
 | What the agent reads | per-phase skill instructions and several files per change | current requirements and the card, fetched by ID through `devcircuit context` |
-| Review | optional verify | one independent review per feature that exercises failure paths first; one fix round for must-fix items |
+| Review | optional verify | one independent review per feature that exercises failure paths first; key features and framework changes get more; one fix round for must-fix items |
 | Close | `openspec archive` merges the delta and archives | one `devcircuit close` command |
 | Fits | audit trails, hand-offs between people, cross-repo planning | one person with an agent, one feature at a time |
 
@@ -154,7 +154,11 @@ Not through tool calls: the hook blocks any tool argument that names the ledger 
 
 **Which model reviews?**
 
-AGENTS.md has one "审核模型" (review model) line: the same model in a fresh context, or a named agent or model; without it, the current model reviews. The fast lane is reviewed only when a contract changes or the diff exceeds about 200 lines.
+AGENTS.md has one "审核模型" (review model) line: the same model in a fresh context, or a named agent or model; without it, the current model reviews.
+
+**How many reviews does a feature get?**
+
+One, before acceptance. Key features also get a requirement review before the design is settled and, with two or more slices, a skeleton review after the first slice. Framework design gets a structure review by default. Bugs in the fast lane are reviewed only when a contract changes or the diff exceeds about 200 lines.
 
 **How many tests?**
 

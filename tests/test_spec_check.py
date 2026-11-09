@@ -253,7 +253,8 @@ def _git(root, *args):
 
 
 def test_code_before_design_on_a_feature_branch(tmp_path):
-    # On feat/<name>, code may change only after the card exists: the card is written once the user settles the design.
+    # On feat/<name>, code may change only after the card is committed: the requirement text and the card are
+    # drafted before the user settles the design, and committed once they do.
     write(tmp_path, "specs/backlog.md", "# 待做池\n")
     _git(tmp_path, "init", "-q", "-b", "main")
     _git(tmp_path, "add", "-A")
@@ -268,6 +269,9 @@ def test_code_before_design_on_a_feature_branch(tmp_path):
     assert "src/app.py" in findings[0].message
 
     write(tmp_path, "specs/export/spec.md", "# export\n")
+    assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]   # a draft is not settled
+    _git(tmp_path, "add", "specs")
+    _git(tmp_path, "commit", "-q", "-m", "design(export)")
     assert scan(tmp_path) == []
 
 
