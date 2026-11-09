@@ -50,7 +50,7 @@ dev-circuit-ultra 把"现在怎么做"和"为什么变成现在这样"分开：
 | 强 | 账本属主是另一个 OS 用户 / ACL 不授权给开发进程 | 开发进程没有读权限 | 不能，由 human 在账本一侧跑 |
 | 最强 | 开发容器不挂载账本、无凭证 | 进程内没有可达路径 | 不能，由 human 在账本一侧跑 |
 
-hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，加进 `.gitignore`）：
+hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，`hooks install` 会把它写进 `.gitignore`）：
 
 ```powershell
 devcircuit hooks install --harness pi --project D:\code\my-app --ledger D:\ledgers\my-app

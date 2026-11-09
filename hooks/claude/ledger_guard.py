@@ -3,15 +3,12 @@
 
 Blocks tool calls that name the private ledger or the guard config itself.
 
-Install: copy this file into <project>/.dev-circuit/hooks/ledger_guard.py and
-register it in .claude/settings.json (see hooks/claude/settings.snippet.json):
-
-  "PreToolUse": [
-    {"matcher": "*", "hooks": [
-      {"type": "command",
-       "command": "python \\"<project>/.dev-circuit/hooks/ledger_guard.py\\""}
-    ]}
-  ]
+Install with `devcircuit hooks install --harness claude --project <project>`: it
+copies this file to <project>/.dev-circuit/hooks/ledger_guard.py and writes the
+.claude/settings.json fragment to .dev-circuit/claude-settings.hook.json. Use that
+fragment rather than a plain `python ledger_guard.py`: python exits 2 when it
+cannot open the script, and Claude Code would then block every tool call on a
+branch without this file.
 
 Config, found by walking up from the hook's working directory:
   <project>/.dev-circuit/guard.json
@@ -213,9 +210,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        raw = sys.stdin.read()
+        # Claude Code sends UTF-8 whatever the console says. Reading through sys.stdin would decode
+        # with the locale (GBK on Chinese Windows, and -I in the launcher ignores PYTHONIOENCODING),
+        # where an odd-length run of UTF-8 bytes swallows the ASCII letter after it, so a path written
+        # right after Chinese text, as in 账本：D:\ledgers, would no longer match.
+        raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         payload = json.loads(raw) if raw.strip() else {}
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, AttributeError) as error:
         print(f"ledger-guard: 无法读取 hook 输入：{error}", file=sys.stderr)
         return 1
     if not isinstance(payload, dict):

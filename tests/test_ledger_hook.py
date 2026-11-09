@@ -1,6 +1,7 @@
 """The Claude Code hook is a subprocess contract: JSON in, exit code out."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,23 @@ def test_blocks_bash_that_names_the_ledger(tmp_path: Path) -> None:
                "tool_input": {"command": f'cat "{ledger}/entries/x.md"'}}
 
     assert run_hook(payload).returncode == 2
+
+
+def test_reads_hook_input_as_utf8_whatever_the_console_encoding(tmp_path: Path) -> None:
+    # Claude Code sends raw UTF-8. Decoded as GBK (the stdin default on Chinese Windows), the odd
+    # 9 bytes of "账本：" swallow the drive letter that follows, and the path slipped through.
+    project, ledger = setup_project(tmp_path)
+    payload = {"cwd": str(project), "tool_name": "Bash",
+               "tool_input": {"command": f"echo 账本：{ledger}"}}
+
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        capture_output=True,
+        timeout=60,
+        env={**os.environ, "PYTHONIOENCODING": "gbk:surrogateescape"},
+    )
+    assert result.returncode == 2, result.stderr.decode("utf-8", errors="replace")
 
 
 def test_blocks_reads_of_the_guard_config(tmp_path: Path) -> None:

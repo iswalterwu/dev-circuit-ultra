@@ -42,7 +42,8 @@ devcircuit hooks status --project D:\code\my-app
 - `project` 可选，是账本里 `entries/<project>/` 的目录名；不写就用项目目录名。
 - `ledger_side` 可选，写 `"human"` 表示账本由 human 在账本一侧维护（强 / 最强档）：开发侧不写也不核对，`devcircuit close` 跳过账本步骤。
 - hook **也拒绝读取 guard.json 本身**：配置文件里就有账本路径，它是最直接的泄漏点。`devcircuit ledger add` / `check` 的命令行里不带账本路径，所以放行；路径由 CLI 进程自己读。
-- `guard.json` 记录的是本机路径，加进 `.gitignore`；hook 脚本本身可以提交，它是边界的一部分，值得被 review。
+- `guard.json` 记录的是本机路径，`hooks install` 会自己把它写进 `.gitignore`（已被更宽的规则忽略就不写）。别让 agent 去改：hook 生效后，命令里出现这个路径就会被拦。hook 脚本本身可以提交，它是边界的一部分，值得被 review。
+- Claude Code 的片段只在 hook 脚本存在时才运行它：切到还没装 hook 的旧分支时放行，而不是拦下所有工具调用（python 打不开脚本时退出码是 2，Claude Code 会当成拦截）。Windows 上片段用 `python`，不用 WindowsApps 里的 `python3` 别名。
 
 hook 的判定对每个工具生效，不看工具名：它扫描这次调用的全部字符串参数和参数 JSON，命中账本路径就拒绝。所以 `read`、`bash`（命令文本里带路径）、`write`、`grep` 以及以后新增的工具都被覆盖。
 
