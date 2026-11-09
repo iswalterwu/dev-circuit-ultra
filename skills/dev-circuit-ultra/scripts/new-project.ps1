@@ -36,7 +36,7 @@ if ($command) {
   if (-not (Test-Path -LiteralPath (Join-Path $tools 'devcircuit'))) {
     throw '找不到 devcircuit。先安装：pipx install git+https://github.com/iswalterwu/dev-circuit-ultra'
   }
-  $env:PYTHONPATH = if ($env:PYTHONPATH) { "$tools;$env:PYTHONPATH" } else { $tools }
+  $env:PYTHONPATH = if ($env:PYTHONPATH) { "$tools$([IO.Path]::PathSeparator)$env:PYTHONPATH" } else { $tools }
   $exe = 'python'
   $prefix = @('-m', 'devcircuit.cli')
 }
