@@ -17,7 +17,7 @@
 | `reason` | 否 | 为什么这样定 |
 | `ids` | 否 | 涉及的现行要求编号 |
 | `ids_removed` | 否 | 删掉的要求编号 |
-| `review` | 否 | 审核结果（收尾记录） |
+| `review` | 否 | 审核结果：收尾记录里是常规审；design、framework 记录里是要求审、结构审，跳过时写"用户明说不审" |
 | `source` | 是 | 写入方；开发侧写的是 `dev-agent` |
 | `human_only` | 是 | 固定 `true` |
 

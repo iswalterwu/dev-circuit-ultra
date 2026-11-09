@@ -173,3 +173,25 @@ def test_the_goal_puts_review_quality_before_cost():
     # Validation: cost about level with OpenSpec, review the main source of quality; the user chose quality.
     skill = read("SKILL.md")
     assert "质量优先" in skill and "成本低于 OpenSpec" not in skill
+
+
+def test_drafts_have_a_way_back():
+    # Drafts are not committed: rejecting the feature restores them, a design change edits them, and a
+    # later session must not mistake an uncommitted card for a settled one.
+    skill = read("SKILL.md")
+    assert "还原改过的能力规格" in skill
+    assert "改能力规格或 `docs/architecture.md` 的草稿" in skill
+    assert "卡还没提交就是草稿" in skill
+
+
+def test_each_review_mode_gets_inputs_it_can_use():
+    # Draft reviews see nothing in `git diff <base>...HEAD`, and a structure review has no card yet.
+    skill, reviewer, framework = read("SKILL.md"), read("reviewer.md"), read("framework.md")
+    assert "同一个工作区" in skill
+    assert "git diff <base> -- docs/requirements" in reviewer.split("## 要求审")[1]
+    assert "骨架路径" in framework and "迁移与回滚" in framework
+    assert "这个切片列出的要求编号" in reviewer.split("## 骨架审")[1]
+
+
+def test_the_summary_limit_leaves_room_for_every_requirement_line():
+    assert "其余部分不超过 25 行" in read("SKILL.md")

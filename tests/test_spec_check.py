@@ -316,3 +316,20 @@ def test_report_counts_legacy_ids_cited_with_their_code(tmp_path, capsys):
         "未被测试引用：DOCK:AC-001-2",
         "演示要求：DOCK:AC-001-3",
     ]
+
+
+def test_the_commit_that_settles_the_design_is_not_blocked_by_other_work(tmp_path):
+    # The pre-commit hook runs on the design commit itself: a staged card with no staged code passes,
+    # whatever else sits in the working tree.
+    write(tmp_path, "specs/backlog.md", "# 待做池\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    _git(tmp_path, "switch", "-q", "-c", "feat/export")
+    write(tmp_path, "specs/export/spec.md", "# export\n")
+    write(tmp_path, "scratch.py", "print(1)\n")
+    _git(tmp_path, "add", "specs")
+    assert scan(tmp_path) == []
+
+    _git(tmp_path, "add", "scratch.py")
+    assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]

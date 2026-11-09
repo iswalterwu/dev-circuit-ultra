@@ -317,3 +317,15 @@ def test_without_a_trunk_line_local_main_still_wins_over_a_stale_remote_default(
 
     found = context_module.merge_base(clone, None)
     assert found and found[0] == "main"
+
+
+def test_map_marks_a_card_that_is_not_committed_as_a_draft(tmp_path: Path, capsys) -> None:
+    """From 0.7 the card exists before the user settles the design; only a committed card is in progress."""
+    _feature_branch(tmp_path)
+    write(tmp_path, "specs/add-import/spec.md", CARD.replace("add-export", "add-import"))
+
+    code, out = run(capsys, "--map", "--root", str(tmp_path))
+    assert code == 0
+    lines = out.splitlines()
+    assert any("add-import" in line and "草稿" in line for line in lines)
+    assert not any("add-export" in line and "草稿" in line for line in lines)

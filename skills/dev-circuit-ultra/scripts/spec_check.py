@@ -1,7 +1,7 @@
-"""spec_check v0.6.1
+"""spec_check v0.7.0
 
 用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段；
-在 feat/<功能> 分支上，卡写好之前不许改代码。
+在 feat/<功能> 分支上，卡提交之前不许改代码（提交草稿的那次提交除外）。
 在研功能的卡（specs/）不参与检查：要求直接写在能力规格里。
 用法：python spec_check.py [--root DIR] [--json] [--report] [--ignore GLOB]... [--ignore-rule RULE]...
 输出：每个问题一行；没有问题时打印一行"通过"和能力规格、要求的数量。--list-rules 列出每条规则查什么。
@@ -246,9 +246,9 @@ def _design_gate(root: Path, patterns) -> list[Finding]:
     if not branch or not branch[0].startswith("feat/"):
         return []
     feature = branch[0][len("feat/"):]
-    changed: set[str] = set()
-    for args in (("diff", "--cached", "--name-only", "--relative"), ("diff", "--name-only", "--relative"),
-                 ("ls-files", "--others", "--exclude-standard")):
+    staged = set(_git_lines(root, "diff", "--cached", "--name-only", "--relative") or [])
+    changed = set(staged)
+    for args in (("diff", "--name-only", "--relative"), ("ls-files", "--others", "--exclude-standard")):
         changed.update(_git_lines(root, *args) or [])
     code = sorted(path for path in changed
                   if Path(path).suffix.lower() in CODE_EXTENSIONS
@@ -262,9 +262,11 @@ def _design_gate(root: Path, patterns) -> list[Finding]:
     card = f"specs/{feature}/spec.md"
     if _git_lines(root, "cat-file", "-e", f"HEAD:./{card}") is not None:  # committed, so the design is settled
         return []
+    if not staged.intersection(code) and _git_lines(root, "cat-file", "-e", f":./{card}") is not None:
+        return []  # the design commit itself: the card is staged and no code is
     return [Finding("code-before-design", card, 0,
-                    f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但卡还没提交："
-                    "定了之前只写能力规格和卡的草稿；用户说“定了”之后先提交设计，再写代码")]
+                    f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但卡还没提交（或已经收尾删掉）："
+                    "定了之前只写能力规格和卡的草稿；用户说“定了”之后先单独提交设计，再写代码")]
 
 
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,

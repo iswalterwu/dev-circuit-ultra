@@ -339,7 +339,13 @@ def render_map(root: Path) -> str:
         out.append("- （还没有能力规格）")
     out.append("在研功能（specs/；上下文：devcircuit context --feature <名>）")
     cards = sorted((root / "specs").glob("*/spec.md")) if (root / "specs").is_dir() else []
-    out += [f"- {card.parent.name}  specs/{card.parent.name}/spec.md  {_slice_status(card)}" for card in cards]
+    in_git = _git(root, "rev-parse", "--is-inside-work-tree") is not None
+    for card in cards:
+        relative = f"specs/{card.parent.name}/spec.md"
+        # From 0.7 the card is written before the user settles the design; only a committed card is settled.
+        draft = in_git and _git(root, "cat-file", "-e", f"HEAD:./{relative}") is None
+        mark = "  草稿（没提交：用户还没说定了）" if draft else ""
+        out.append(f"- {card.parent.name}  {relative}  {_slice_status(card)}{mark}")
     if not cards:
         out.append("- （没有）")
     out.append(_summary_line(root))

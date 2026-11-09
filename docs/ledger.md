@@ -11,8 +11,8 @@ dev-circuit-ultra 把"现在怎么做"和"为什么变成现在这样"分开：
 
 | 时机 | 命令 | 记什么 |
 |---|---|---|
-| 框架设计定了 | `devcircuit ledger add --kind framework` | 选定的结构、被否方案和原因 |
-| 功能设计定了 | `devcircuit ledger add --kind design --ids … --removed-ids …` | 选定的设计、被否方案、涉及和删掉的要求编号 |
+| 框架设计定了 | `devcircuit ledger add --kind framework` | 选定的结构、被否方案和原因、结构审结论 |
+| 功能设计定了 | `devcircuit ledger add --kind design --ids … --removed-ids …` | 选定的设计、被否方案、涉及和删掉的要求编号；重点功能加要求审结论 |
 | 设计中途改了 | `devcircuit ledger add --kind design-change` | 新的决定、被否的旧决定和原因 |
 | 收尾 | `devcircuit close` 自动写 `close` 记录 | 一句话交付、审核结果、close 提交 |
 | 核对出不一致 | `devcircuit ledger add --kind correction` | 补记或更正；原因不清楚时先问 human |
