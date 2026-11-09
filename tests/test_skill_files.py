@@ -195,3 +195,11 @@ def test_each_review_mode_gets_inputs_it_can_use():
 
 def test_the_summary_limit_leaves_room_for_every_requirement_line():
     assert "其余部分不超过 25 行" in read("SKILL.md")
+
+
+def test_feature_drafts_hold_only_specs_and_the_card():
+    # 0.7 validation B-2 put a line of architecture detail into the design commit; the user chose to keep
+    # feature drafts to specs and the card, with architecture detail committed alongside the code.
+    skill = read("SKILL.md")
+    assert "草稿只有能力规格和卡" in skill
+    assert "实现时随代码提交" in skill
