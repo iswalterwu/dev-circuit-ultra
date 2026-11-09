@@ -10,13 +10,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import context
 from ._loader import load_script, skill_root
 
 HOOK_FILE = ".githooks/pre-commit"
 HOOK_RULE = ".githooks/** text eol=lf"
 AUTO_RULE = "* text=auto eol=lf"
 
-# destination -> (source relative to the skill folder, needs name substitution)
+# destination -> (source relative to the skill folder, needs project name and trunk substitution)
 PROJECT_FILES = {
     "AGENTS.md": ("templates/AGENTS.md", True),
     "CLAUDE.md": ("templates/project/CLAUDE.md", False),
@@ -107,17 +108,28 @@ def _run_guards(root: Path) -> tuple[int, int]:
     return codes[0], codes[1]
 
 
+def _adopted_trunk(root: Path) -> str:
+    """The branch an adopted repo integrates into: origin's default branch, else the current one."""
+    remote = context.remote_trunk(root)
+    if remote:
+        return remote
+    current = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--quiet", "--short", "HEAD"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
+    return current if current and not current.startswith("feat/") else "main"
+
+
 def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     """Create a dev-circuit-ultra project skeleton, or fill the gaps in a repo."""
     root = _prepare_target(path, adopt)
     project_name = name or root.name
+    trunk = _adopted_trunk(root) if adopt else "main"
     created: list[str] = []
     skipped: list[str] = []
 
     for relative, (source, substitute) in PROJECT_FILES.items():
         content = read_template(source)
         if substitute:
-            content = content.replace("<项目名>", project_name)
+            content = content.replace("<项目名>", project_name).replace("主干：`main`", f"主干：`{trunk}`")
         _write_missing(root, relative, content, created, skipped)
     _ensure_gitattributes(root, adopt, created, skipped)
     make_executable(root / HOOK_FILE)

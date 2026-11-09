@@ -2,6 +2,19 @@
 
 只记对使用者有影响的变化。版本号对应 git tag；`doc_guard` / `spec_check` 的脚本版本是各自独立的一条线，不跟包版本走。
 
+## 未发布
+
+- `devcircuit` 的报错也用 UTF-8 输出：中文 Windows 上用管道接走输出（如 `devcircuit ledger check 2>&1 | head`）时，报错不再是乱码。
+- 默认基线不再写死 `main`：`context`、`ledger check`、`close` 不带 `--base` 时，先取 AGENTS.md 里"主干"一行写的分支（本地没有就用 origin 上的），没写就用远端默认分支（origin/HEAD），再没有才是 `main` / `master`。AGENTS.md 写的主干找不到时直接报错，不悄悄换成别的分支。AGENTS 模板第 5 节加了"主干"一行，`devcircuit init --adopt` 按仓库的远端默认分支或当前分支填写。
+- `hooks install --harness claude` 提示把 hooks 段合并进 `.claude/settings.local.json`：片段里是本机路径，不该提交。
+- `spec_check` 0.6.1：`--report` 把旧编号（AC-xxx-y）也算进统计。测试里写成 `<代号>:AC-xxx-y` 就算有测试引用，旧编号下的"证明：演示"也认；首行写明"含 N 条旧编号"。
+
+### 升级
+
+1. 主干不是 `main`、远端默认分支也不是主干的项目：在 AGENTS.md 第 5 节加一行 ``- 主干：`<分支>` ``。
+2. 老项目的测试里把旧编号写成 `<代号>:AC-xxx-y`，`spec_check --report` 才算它有测试。`devcircuit vendor` 更新项目里的 `spec_check.py`。
+3. Claude Code 的 hooks 段如果放在 `.claude/settings.json` 里，挪到 `.claude/settings.local.json`。
+
 ## 0.6.0
 
 ### 流程

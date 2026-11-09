@@ -24,6 +24,7 @@ READ_ME = re.compile(r"^>\s*\*\*读我\*\*\s*[：:]\s*(.*)$")
 CURRENT_SLICE = re.compile(r"^-\s+(S\d+[：:].*?)\s*[（(]当前[）)]")
 SLICE = re.compile(r"^-\s+(S\d+[：:].*)$")
 CAPABILITY_LINE = re.compile(r"^能力[：:]\s*(.*)$")
+TRUNK_LINE = re.compile(r"^\s*(?:[-*]\s*)?主干[：:]\s*`?([^\s`（(，,。；;]+)`?", re.MULTILINE)
 CODE_WORD = re.compile(r"(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])")
 MAX_TITLE = 160
 MAX_LISTED_IDS = 10
@@ -130,22 +131,49 @@ def _git_lines(root: Path, *args: str) -> list[str]:
     return [line for line in (output or "").splitlines() if line.strip()]
 
 
+def named_trunk(root: Path) -> str | None:
+    """The trunk AGENTS.md names on its 主干 line, if it has one."""
+    agents = root / "AGENTS.md"
+    if not agents.is_file():
+        return None
+    match = TRUNK_LINE.search(agents.read_text(encoding="utf-8-sig", errors="replace"))
+    return match.group(1) if match else None
+
+
+def remote_trunk(root: Path) -> str | None:
+    """The remote's default branch (origin/HEAD), without the origin/ prefix."""
+    ref = (_git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD") or "").strip()
+    return ref.split("/", 1)[1] if ref.startswith("origin/") else None
+
+
 def merge_base(root: Path, base: str | None) -> tuple[str, str] | None:
     """Return (base name, merge-base sha), or None when there is nothing to compare against.
 
-    Without --base, main and then master are tried. An explicit base that cannot be compared is an
-    error: falling back silently would hand the reviewer an empty change set.
+    Without --base: the trunk AGENTS.md names (local branch, then origin's), else the remote's default
+    branch, then main and master. An explicit base or a named trunk that cannot be compared is an
+    error: falling back silently would hand the reviewer the wrong change set, or an empty one.
     """
     if _git(root, "rev-parse", "--is-inside-work-tree") is None:
         if base:
             raise ContextError(f"不是 git 仓库，没法和基线 {base} 比较")
         return None
-    for candidate in ([base] if base else ["main", "master"]):
+    named = None if base else named_trunk(root)
+    if base:
+        candidates = [base]
+    elif named:
+        candidates = [named, f"origin/{named}"]
+    else:
+        remote = remote_trunk(root)
+        candidates = [*([remote, f"origin/{remote}"] if remote else []), "main", "master"]
+    for candidate in dict.fromkeys(candidates):
         sha = (_git(root, "merge-base", candidate, "HEAD") or "").strip()
         if sha:
             return candidate, sha
     if base:
         raise ContextError(f"找不到基线分支：{base}（或它和 HEAD 没有共同祖先）")
+    if named and _git(root, "rev-parse", "--verify", "--quiet", "HEAD") is not None:
+        raise ContextError(f"AGENTS.md 写的主干 {named} 找不到（本地和 origin 都没有），或它和 HEAD 没有共同祖先："
+                           "改成实际的主干分支，或用 --base 指定")
     return None
 
 

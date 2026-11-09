@@ -293,3 +293,22 @@ def test_code_before_design_explains_a_branch_name_it_cannot_map(tmp_path):
     findings = scan(tmp_path)
     assert [finding.rule for finding in findings] == ["code-before-design"]
     assert "feat/ui/login" in findings[0].message and "功能名" in findings[0].message
+
+
+def test_report_counts_legacy_ids_cited_with_their_code(tmp_path, capsys):
+    write(tmp_path, "docs/requirements/dock.md", """代号：DOCK
+- DOCK-1：new
+- AC-001-1：old, tested
+- AC-001-2：old, untested
+- AC-001-3：old, shown
+  - 证明：演示
+""")
+    write(tmp_path, "tests/test_dock.py", "# DOCK-1 DOCK:AC-001-1\n")
+
+    assert main(["--root", str(tmp_path), "--report"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "spec_check：通过（1 份能力规格，4 条要求）",
+        "4 条要求（含 3 条旧编号）：2 条有测试引用，1 条靠演示，1 条既没有测试也没有演示",
+        "未被测试引用：DOCK:AC-001-2",
+        "演示要求：DOCK:AC-001-3",
+    ]

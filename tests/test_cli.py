@@ -380,3 +380,37 @@ def test_unknown_arguments_are_rejected(tmp_path: Path, capsys) -> None:
     # Only the checker passthroughs forward extra flags; elsewhere a typo must not be dropped silently.
     assert cli.main(["context", "--map", "--root", str(tmp_path), "--bogus"]) == 2
     assert "--bogus" in capsys.readouterr().err
+
+
+def test_errors_reach_a_pipe_as_utf8_with_legacy_stdio_encoding(tmp_path: Path) -> None:
+    """Piped on Chinese Windows, stderr is GBK; `devcircuit ledger check 2>&1 | head` must still read as UTF-8."""
+    env = {**os.environ, "PYTHONIOENCODING": "gbk", "PYTHONUTF8": "0",
+           "PYTHONPATH": str(Path(cli.__file__).resolve().parents[1])}
+    for name in ("DEVCIRCUIT_LEDGER", "DEVCIRCUIT_PROJECT"):
+        env.pop(name, None)
+    result = subprocess.run([sys.executable, "-m", "devcircuit.cli", "ledger", "check", "--project", str(tmp_path)],
+                            capture_output=True, env=env)
+    assert result.returncode == 2
+    assert "没有配置账本" in result.stderr.decode("utf-8", errors="replace")
+
+
+def test_hooks_install_points_the_claude_snippet_at_local_settings(tmp_path: Path, capsys) -> None:
+    """The snippet holds this machine's absolute paths, so it goes into the settings file nobody commits."""
+    project = tmp_path / "app"
+    ledger = tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+
+    assert cli.main(["hooks", "install", "--harness", "claude",
+                     "--project", str(project), "--ledger", str(ledger)]) == 0
+    assert ".claude/settings.local.json" in capsys.readouterr().out
+
+
+def test_adopt_writes_the_repos_trunk_into_agents(tmp_path: Path, capsys) -> None:
+    """The template says main; a repo adopted on develop must not get main as its default base."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "develop", str(repo)], check=True)
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    capsys.readouterr()
+    assert "主干：`develop`" in (repo / "AGENTS.md").read_text(encoding="utf-8")

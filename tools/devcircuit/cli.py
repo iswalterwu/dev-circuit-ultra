@@ -230,7 +230,7 @@ def _install_hooks(args) -> int:
         snippet = claude_snippet(destination)
         snippet_path = project / CONFIG_DIR / "claude-settings.hook.json"
         snippet_path.write_text(snippet + "\n", encoding="utf-8")
-        print("把下面的 hooks 段合并进 .claude/settings.json：", file=out)
+        print("把下面的 hooks 段合并进 .claude/settings.local.json（片段里是本机路径，这个文件不提交）：", file=out)
         print(snippet, file=out)
         print("", file=out)
         print(f"同样的内容也写到了 {snippet_path}", file=out)
@@ -383,6 +383,7 @@ def _migrate(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     _out()
+    _out(sys.stderr)  # errors go here; piped on Chinese Windows it would otherwise be GBK
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog="devcircuit",
@@ -408,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--ids", metavar="ID[,ID...]", help="这些要求的原文和例子")
     mode.add_argument("--feature", metavar="NAME", help="功能的卡、分支改到或引用到的要求、相关测试")
     mode.add_argument("--review", metavar="NAME", help="同 --feature，另加基线和改动统计，交给审核")
-    context.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
+    context.add_argument("--base", default=None, help="对比的基线分支（默认取 AGENTS.md 写的主干，没写就用远端默认分支，再没有就 main / master）")
     context.add_argument("--root", default=".", help="项目目录（默认当前目录）")
     context.add_argument("--max-chars", type=int, default=context_module.DEFAULT_MAX_CHARS,
                          help="要求原文部分的字数上限，超出时截断并列出没给的编号")
@@ -417,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     close.add_argument("feature", help="功能名，和 specs/<feature>/ 一致")
     close.add_argument("--summary", required=True, help="一句话说明交付了什么")
     close.add_argument("--review", default=None, help="审核结果，一句话")
-    close.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
+    close.add_argument("--base", default=None, help="对比的基线分支（默认取 AGENTS.md 写的主干，没写就用远端默认分支，再没有就 main / master）")
     close.add_argument("--project", default=".", help="项目目录（默认当前目录）")
 
     migrate = sub.add_parser("migrate", help="升级前检查：列出旧项目要改的地方，不改任何文件")
@@ -450,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     ledger_add.add_argument("--commit", default=None, help="对应的提交（默认 HEAD）")
     ledger_check = ledger_sub.add_parser("check", help="核对账本和项目；只报不一致的功能、编号和提交")
     ledger_check.add_argument("--project", default=".", help="项目目录（默认当前目录）")
-    ledger_check.add_argument("--base", default=None, help="对比的基线分支（默认 main，没有就 master）")
+    ledger_check.add_argument("--base", default=None, help="对比的基线分支（默认取 AGENTS.md 写的主干，没写就用远端默认分支，再没有就 main / master）")
 
     sync = sub.add_parser("sync", help="把技能同步到 Claude Code / agents / DSH 目录，并移除已退役的技能")
     sync.add_argument("--target", action="append", default=[], metavar="DIR",

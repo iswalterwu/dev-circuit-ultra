@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -174,7 +174,8 @@ def _requirements(root: Path, patterns=()):
                         findings.append(Finding("dup-id", relative, number, f"编号重复：{identifier}"))
                     file_legacy.add(identifier)
                     if code:
-                        legacy.add(f"{code}:{identifier}")
+                        current = f"{code}:{identifier}"  # cited as <CODE>:AC-xxx-y, so counted that way
+                        legacy.add(current)
                 else:
                     current = identifier
                     if identifier.split("-", 1)[0] != code:
@@ -298,7 +299,7 @@ class _Coverage(NamedTuple):
 def _coverage(root: Path, patterns) -> _Coverage:
     _, codes, requirements, legacy, demonstrations = _requirements(root, patterns)
     tested = {identifier for path, _, identifier in _references(root, codes, patterns) if _is_test(path)}
-    return _Coverage(sorted(requirements), tested, demonstrations, len(legacy))
+    return _Coverage([*sorted(requirements), *sorted(legacy)], tested, demonstrations, len(legacy))
 
 
 def report(root: Path, ignores=(), ignore_file=None, use_ignore_file: bool = True) -> list[str]:
@@ -324,10 +325,8 @@ def _report_header(coverage: _Coverage) -> str:
     shown = sum(identifier in coverage.demonstrations and identifier not in coverage.tested
                 for identifier in ids)
     neither = len(ids) - tested - shown
-    header = f"{len(ids)} 条要求：{tested} 条有测试引用，{shown} 条靠演示，{neither} 条既没有测试也没有演示"
-    if coverage.legacy:
-        header += f"；另有 {coverage.legacy} 条旧编号（AC-xxx-y）不在统计内"
-    return header
+    legacy = f"（含 {coverage.legacy} 条旧编号）" if coverage.legacy else ""
+    return f"{len(ids)} 条要求{legacy}：{tested} 条有测试引用，{shown} 条靠演示，{neither} 条既没有测试也没有演示"
 
 
 def main(argv: list[str] | None = None) -> int:

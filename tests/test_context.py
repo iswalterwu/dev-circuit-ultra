@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import devcircuit.cli as cli
+import devcircuit.context as context_module
 
 
 def write(root: Path, rel: str, text: str) -> Path:
@@ -232,3 +233,40 @@ def test_ids_accept_the_separators_the_tools_print(tmp_path: Path, capsys) -> No
 
     assert code == 0
     assert "例：选中一条记录后导出，得到该记录。" in out and "例：导出完成时看到提示。" in out
+
+
+def _trunk_repo(root: Path, trunk: str) -> Path:
+    """A repo whose trunk has one commit."""
+    project(root)
+    git(root, "init", "-q", "-b", trunk)
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "base")
+    return root
+
+
+def test_the_base_defaults_to_the_trunk_agents_names(tmp_path: Path) -> None:
+    _trunk_repo(tmp_path, "workbench")
+    write(tmp_path, "AGENTS.md", "# 项目\n\n- 主干：`workbench`（`devcircuit` 默认拿它当对比的基线）\n")
+    git(tmp_path, "switch", "-q", "-c", "feat/add-export")
+
+    found = context_module.merge_base(tmp_path, None)
+    assert found and found[0] == "workbench"
+
+
+def test_without_a_named_trunk_the_base_is_the_remotes_default_branch(tmp_path: Path) -> None:
+    remote = _trunk_repo(tmp_path / "remote", "workbench")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    git(clone, "switch", "-q", "-c", "feat/add-export")
+
+    found = context_module.merge_base(clone, None)
+    assert found and found[0] == "workbench"
+
+
+def test_a_trunk_agents_names_must_exist(tmp_path: Path, capsys) -> None:
+    _trunk_repo(tmp_path, "main")
+    write(tmp_path, "AGENTS.md", "# 项目\n\n- 主干：`develop`\n")
+    write(tmp_path, "specs/add-export/spec.md", CARD)
+
+    assert cli.main(["context", "--feature", "add-export", "--root", str(tmp_path)]) == 2
+    assert "AGENTS.md" in capsys.readouterr().err
