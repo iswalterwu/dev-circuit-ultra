@@ -1,6 +1,7 @@
 """The guards are also a CLI; these tests cover the wrapper, not the rules."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import devcircuit.cli as cli
@@ -159,6 +160,85 @@ def test_claude_snippet_uses_the_available_interpreter(tmp_path: Path) -> None:
     assert cli.python_command() in snippet
     assert "hook.py" in snippet
     assert json.loads(snippet)["hooks"]["PreToolUse"][0]["matcher"] == "*"
+
+
+def test_python_command_avoids_the_windows_store_alias(monkeypatch) -> None:
+    # On Windows `python3` is usually the WindowsApps stub even when a real `python` is installed.
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli, "IS_WINDOWS", True)
+    assert cli.python_command() == "python"
+    monkeypatch.setattr(cli, "IS_WINDOWS", False)
+    assert cli.python_command() == "python3"
+
+
+def install_claude_hook(tmp_path: Path, capsys) -> tuple[Path, Path, str]:
+    project, ledger = tmp_path / "app", tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+    assert cli.main(["hooks", "install", "--harness", "claude",
+                     "--project", str(project), "--ledger", str(ledger)]) == 0
+    capsys.readouterr()
+    snippet = json.loads((project / ".dev-circuit" / "claude-settings.hook.json").read_text(encoding="utf-8"))
+    return project, ledger, snippet["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+
+def run_hook_command(command: str, payload: dict, cwd: Path) -> subprocess.CompletedProcess:
+    # Claude Code hands the command to a shell; exit 2 means "block this tool call".
+    return subprocess.run(command, shell=True, cwd=cwd, input=json.dumps(payload), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+
+
+def test_claude_hook_command_steps_aside_when_its_script_is_gone(tmp_path: Path, capsys) -> None:
+    project, ledger, command = install_claude_hook(tmp_path, capsys)
+    payload = {"cwd": str(project), "tool_name": "Read", "tool_input": {"file_path": str(ledger / "x.md")}}
+
+    blocked = run_hook_command(command, payload, project)
+    assert blocked.returncode == 2, blocked.stderr
+    assert "账本边界" in blocked.stderr
+
+    # e.g. checking out an older branch that has no .dev-circuit/hooks yet
+    (project / ".dev-circuit" / "hooks" / "ledger_guard.py").unlink()
+    gone = run_hook_command(command, payload, project)
+    assert gone.returncode == 0, gone.stderr
+
+
+def test_hooks_install_adds_the_guard_config_to_gitignore(tmp_path: Path, capsys) -> None:
+    project, ledger = tmp_path / "app", tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+    (project / ".gitignore").write_bytes(b"node_modules/\r\ndist/")  # CRLF, no final newline
+    args = ["hooks", "install", "--harness", "claude", "--project", str(project), "--ledger", str(ledger)]
+
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    data = (project / ".gitignore").read_bytes()
+    assert data.startswith(b"node_modules/\r\ndist/\r\n")
+    assert data.endswith(b"\r\n.dev-circuit/guard.json\r\n")
+    # done by the command: under the hook, an agent that edits .gitignore naming guard.json is blocked
+    assert "已把 .dev-circuit/guard.json 加进 .gitignore" in out
+
+    assert cli.main([*args, "--force"]) == 0
+    assert "已把" not in capsys.readouterr().out
+    assert (project / ".gitignore").read_bytes() == data
+
+
+def test_hooks_install_creates_gitignore_when_missing(tmp_path: Path, capsys) -> None:
+    project, _, _ = install_claude_hook(tmp_path, capsys)
+
+    lines = (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".dev-circuit/guard.json" in lines
+
+
+def test_hooks_install_respects_a_wider_ignore_rule(tmp_path: Path, capsys) -> None:
+    project, ledger = tmp_path / "app", tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    (project / ".gitignore").write_text(".dev-circuit/*.json\n", encoding="utf-8")
+
+    assert cli.main(["hooks", "install", "--harness", "pi",
+                     "--project", str(project), "--ledger", str(ledger)]) == 0
+    assert (project / ".gitignore").read_text(encoding="utf-8") == ".dev-circuit/*.json\n"
 
 
 def test_vendor_copies_and_refreshes_guards(tmp_path: Path, capsys) -> None:

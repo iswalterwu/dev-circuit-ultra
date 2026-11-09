@@ -4,6 +4,7 @@ Read-only: it names files and steps and changes nothing. Work in progress is the
 so uncommitted changes under specs/ are reported, never touched.
 """
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -16,6 +17,9 @@ HOOK_FILES = {
     Path(".pi") / "extensions" / "ledger-guard.js": ("pi", "ledger-guard.js"),
     Path(".dev-circuit") / "hooks" / "ledger_guard.py": ("claude", "ledger_guard.py"),
 }
+# The retired per-feature file: a bare `design.md` (old templates said 同目录的 `design.md`) or one
+# under specs/. A design.md in any other directory, docs/design.md say, is the project's own document.
+OLD_DESIGN_ROUTE = re.compile(r"(?<![\w./\\-])design\.md|\bspecs[/\\][^\s`'\"|)]*design\.md")
 TABLE_RULE = re.compile(r"^\|\s*:?-{3,}", re.MULTILINE)
 SECTION = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 
@@ -70,12 +74,46 @@ def _agents(project: Path) -> list[str]:
         return ["没有 AGENTS.md：devcircuit init --adopt --path <项目> 补齐，再填项目事实"]
     text = _text(agents)
     actions = []
-    if "design.md" in text:
+    if OLD_DESIGN_ROUTE.search(text):
         actions.append("AGENTS.md 的路由还提到 design.md：改成 devcircuit context --feature <feature>")
     if "devcircuit context" not in text:
         actions.append("AGENTS.md 没有用 devcircuit context 取上下文：照新模板更新第 2、3、7 节")
     if "审核模型" not in text:
         actions.append("AGENTS.md 缺“审核模型”一行：写同模型，或指定审核用的 agent / 模型")
+    return actions
+
+
+def _hook_commands(settings) -> list[str]:
+    """PreToolUse command strings, skipping anything not shaped like Claude Code settings."""
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    commands = []
+    for group in groups if isinstance(groups, list) else []:
+        entries = group.get("hooks") if isinstance(group, dict) else None
+        for hook in entries if isinstance(entries, list) else []:
+            command = hook.get("command") if isinstance(hook, dict) else None
+            if isinstance(command, str):
+                commands.append(command)
+    return commands
+
+
+def _claude_settings(project: Path) -> list[str]:
+    """Hook commands from older installs block every tool call once the script is missing."""
+    from .cli import HOOK_LAUNCHER  # cli imports this module; import late to avoid the cycle
+
+    actions = []
+    for name in ("settings.json", "settings.local.json"):
+        path = project / ".claude" / name
+        if not path.is_file():
+            continue
+        try:
+            settings = json.loads(_text(path))
+        except ValueError:
+            continue
+        if any("ledger_guard.py" in command and HOOK_LAUNCHER not in command
+               for command in _hook_commands(settings)):
+            actions.append(f".claude/{name} 里的 ledger_guard 命令在脚本不在时会拦下所有工具调用："
+                           "devcircuit hooks install --harness claude --project <项目>，再用新生成的片段替换这一段")
     return actions
 
 
@@ -90,6 +128,7 @@ def _tooling(project: Path) -> list[str]:
         if installed.is_file() and _text(installed) != _text(asset_path(*source)):
             actions.append(f"{relative.as_posix()} 不是当前版本："
                            f"devcircuit hooks install --harness {source[0]} --project <项目> --force")
+    actions += _claude_settings(project)
     try:
         if not ledger.human_side(project):  # a human-side ledger is a setup, not a to-do
             ledger.resolve(project)

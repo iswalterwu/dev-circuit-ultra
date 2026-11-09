@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,34 +19,74 @@ from .sync import sync as sync_skills
 
 CONFIG_DIR = ".dev-circuit"
 CONFIG_NAME = "guard.json"
+GUARD_IGNORE = f"{CONFIG_DIR}/{CONFIG_NAME}"
+IS_WINDOWS = os.name == "nt"
 HOOKS = {
     "pi": (("pi", "ledger-guard.js"), Path(".pi") / "extensions" / "ledger-guard.js"),
     "claude": (("claude", "ledger_guard.py"), Path(CONFIG_DIR) / "hooks" / "ledger_guard.py"),
 }
+# Claude Code reads exit 2 as "block this call", and that is also how python exits when it cannot
+# open a script. Run the hook only if it is there (an older branch may not have it), so a missing
+# script lets calls through instead of blocking every one. -I keeps the project's own modules
+# (a json.py at the root, say) out of the interpreter's path. No $, backticks or double quotes
+# inside, so bash, cmd and PowerShell all pass it through unchanged.
+HOOK_LAUNCHER = ("import os,runpy,sys; sys.argv=sys.argv[1:]; "
+                 "os.path.isfile(sys.argv[0]) and runpy.run_path(sys.argv[0], run_name='__main__')")
+
+
 def python_command() -> str:
-    """Name the interpreter the way this machine spells it."""
-    for candidate in ("python3", "python"):
+    """Name the interpreter the way this machine spells it.
+
+    On Windows `python3` is usually the WindowsApps store alias, so `python` comes first there.
+    """
+    candidates = ("python", "python3") if IS_WINDOWS else ("python3", "python")
+    for candidate in candidates:
         if shutil.which(candidate):
             return candidate
-    return "python3"
+    return candidates[0]
 
 
 def claude_snippet(hook: Path) -> str:
     """Build the .claude/settings.json fragment with proper JSON escaping."""
+    command = f'{python_command()} -I -c "{HOOK_LAUNCHER}" "{Path(hook).as_posix()}"'
     payload = {
         "hooks": {
             "PreToolUse": [
                 {
                     "matcher": "*",
                     "hooks": [
-                        {"type": "command",
-                         "command": f'{python_command()} "{hook}"'},
+                        {"type": "command", "command": command},
                     ],
                 },
             ],
         },
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _ignore_guard(project: Path) -> bool:
+    """Have git ignore guard.json; True when this call added the line.
+
+    The command does it rather than the agent: once the hook is on, any tool call that names
+    guard.json, an edit of .gitignore included, is blocked.
+    """
+    try:
+        probe = subprocess.run(["git", "-C", str(project), "check-ignore", "-q", "--no-index", GUARD_IGNORE],
+                               capture_output=True)
+        if probe.returncode == 0:  # already covered, maybe by a wider rule such as .dev-circuit/*.json
+            return False
+    except OSError:
+        pass
+    gitignore = project / ".gitignore"
+    data = gitignore.read_bytes() if gitignore.is_file() else b""
+    lines = data.decode("utf-8-sig", errors="replace").splitlines()
+    if any(line.strip().lstrip("/") == GUARD_IGNORE for line in lines):
+        return False
+    eol = "\r\n" if b"\r\n" in data else "\n"
+    lead = eol if data and not data.endswith(b"\n") else ""
+    with gitignore.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(f"{lead}# 本机路径，不要提交：账本位置只对这台机器有意义{eol}{GUARD_IGNORE}{eol}")
+    return True
 
 
 def _out(stream=None):
@@ -163,6 +205,7 @@ def _install_hooks(args) -> int:
         json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    ignored_now = _ignore_guard(project)
 
     source, relative = HOOKS[args.harness]
     destination = project / relative
@@ -176,6 +219,8 @@ def _install_hooks(args) -> int:
         print(f"已安装 hook：{destination}", file=out)
 
     print(f"已写入配置：{config_path}", file=out)
+    if ignored_now:
+        print(f"已把 {GUARD_IGNORE} 加进 .gitignore：它记录的是本机账本路径。", file=out)
     print(f"账本：{config['ledger']}", file=out)
     print("", file=out)
     if args.harness == "pi":
@@ -189,8 +234,7 @@ def _install_hooks(args) -> int:
         print(snippet, file=out)
         print("", file=out)
         print(f"同样的内容也写到了 {snippet_path}", file=out)
-    print("", file=out)
-    print("把 .dev-circuit/guard.json 加进 .gitignore：它记录的是本机账本路径。", file=out)
+        print("hook 脚本不在时（比如切到还没装 hook 的旧分支），这条命令放行，不会拦下所有调用。", file=out)
     return 0
 
 

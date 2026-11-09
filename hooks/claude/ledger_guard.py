@@ -3,15 +3,12 @@
 
 Blocks tool calls that name the private ledger or the guard config itself.
 
-Install: copy this file into <project>/.dev-circuit/hooks/ledger_guard.py and
-register it in .claude/settings.json (see hooks/claude/settings.snippet.json):
-
-  "PreToolUse": [
-    {"matcher": "*", "hooks": [
-      {"type": "command",
-       "command": "python \\"<project>/.dev-circuit/hooks/ledger_guard.py\\""}
-    ]}
-  ]
+Install with `devcircuit hooks install --harness claude --project <project>`: it
+copies this file to <project>/.dev-circuit/hooks/ledger_guard.py and writes the
+.claude/settings.json fragment to .dev-circuit/claude-settings.hook.json. Use that
+fragment rather than a plain `python ledger_guard.py`: python exits 2 when it
+cannot open the script, and Claude Code would then block every tool call on a
+branch without this file.
 
 Config, found by walking up from the hook's working directory:
   <project>/.dev-circuit/guard.json

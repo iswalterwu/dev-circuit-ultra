@@ -59,6 +59,35 @@ def test_migrate_is_quiet_for_a_current_project(tmp_path: Path, capsys) -> None:
     assert "没有要改的" in capsys.readouterr().out
 
 
+def test_migrate_leaves_a_project_design_doc_alone(tmp_path: Path, capsys) -> None:
+    # Only the retired per-feature design.md is old routing; docs/design.md is the project's own doc.
+    project = tmp_path / "ui"
+    assert cli.main(["init", "--path", str(project), "--name", "UI"]) == 0
+    agents = project / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8") + "\n| 改界面 | `docs/design.md` |\n", encoding="utf-8")
+    capsys.readouterr()
+
+    cli.main(["migrate", "--check", "--project", str(project)])
+    assert "design.md" not in capsys.readouterr().out
+
+
+def test_migrate_flags_a_claude_hook_command_that_blocks_without_its_script(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    old = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+        {"type": "command", "command": f'python3 "{project / ".dev-circuit/hooks/ledger_guard.py"}"'}]}]}}
+    write(project, ".claude/settings.local.json", json.dumps(old))
+    capsys.readouterr()
+
+    cli.main(["migrate", "--check", "--project", str(project)])
+    out = capsys.readouterr().out
+    assert ".claude/settings.local.json" in out and "hooks install --harness claude" in out
+
+    write(project, ".claude/settings.local.json", cli.claude_snippet(project / ".dev-circuit/hooks/ledger_guard.py"))
+    cli.main(["migrate", "--check", "--project", str(project)])
+    assert ".claude/settings.local.json" not in capsys.readouterr().out
+
+
 def test_migrate_reports_files_over_the_size_limits(tmp_path: Path, capsys) -> None:
     project = tmp_path / "big"
     assert cli.main(["init", "--path", str(project), "--name", "Big"]) == 0
