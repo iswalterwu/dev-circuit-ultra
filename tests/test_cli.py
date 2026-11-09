@@ -1,8 +1,13 @@
 """The guards are also a CLI; these tests cover the wrapper, not the rules."""
 
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 import devcircuit.cli as cli
 
@@ -349,6 +354,26 @@ def test_pre_commit_hook_is_executable_and_clean(tmp_path: Path) -> None:
     status = subprocess.run(["git", "-C", str(project), "status", "--short"],
                             capture_output=True, text=True, encoding="utf-8")
     assert status.stdout.strip() == ""
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="需要 POSIX sh")
+@pytest.mark.parametrize("broken, working", [("python3", "python"), ("python", "python3")])
+def test_pre_commit_skips_a_python_that_does_not_run(tmp_path: Path, broken: str, working: str) -> None:
+    # On Windows `python3` is often the WindowsApps store stub: found on PATH, but it only prints
+    # "Python was not found" and fails. The hook must move on to an interpreter that runs, whichever
+    # name it tries first on this platform.
+    project = tmp_path / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    fake = tmp_path / "bin"
+    stub = write(fake, broken, "#!/bin/sh\necho 'Python was not found' >&2\nexit 49\n")
+    real = write(fake, working, f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n')
+    for path in (stub, real):
+        path.chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"}
+
+    result = subprocess.run(["sh", ".githooks/pre-commit"], cwd=project, env=env, capture_output=True,
+                            text=True, encoding="utf-8", errors="replace")
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_unknown_arguments_are_rejected(tmp_path: Path, capsys) -> None:

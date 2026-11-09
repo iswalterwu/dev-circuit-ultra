@@ -210,9 +210,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        raw = sys.stdin.read()
+        # Claude Code sends UTF-8 whatever the console says. Reading through sys.stdin would decode
+        # with the locale (GBK on Chinese Windows, and -I in the launcher ignores PYTHONIOENCODING),
+        # where an odd-length run of UTF-8 bytes swallows the ASCII letter after it, so a path written
+        # right after Chinese text, as in 账本：D:\ledgers, would no longer match.
+        raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         payload = json.loads(raw) if raw.strip() else {}
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, AttributeError) as error:
         print(f"ledger-guard: 无法读取 hook 输入：{error}", file=sys.stderr)
         return 1
     if not isinstance(payload, dict):
