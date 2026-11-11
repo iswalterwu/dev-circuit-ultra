@@ -333,3 +333,147 @@ def test_the_commit_that_settles_the_design_is_not_blocked_by_other_work(tmp_pat
 
     _git(tmp_path, "add", "scratch.py")
     assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]
+
+
+def _project(tmp_path):
+    write(tmp_path, "specs/backlog.md", "# 待做池\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+
+
+def test_ignore_patterns_may_start_with_a_dot():
+    # `.lstrip("./")` also ate the leading dot, so `.pi/**` became `pi/**` and never matched: a project could
+    # not allowlist a dot-directory, and nothing said the entry was dead.
+    ignored = spec_check.path_is_ignored
+    assert ignored(".pi/extensions/ledger-guard.js", [".pi/**"])
+    assert ignored(".dev-circuit/hooks/ledger_guard.py", [".dev-circuit/hooks/ledger_guard.py"])
+    assert ignored(".eslintrc.js", [".eslintrc.js"])
+    assert ignored("vendor/a.py", ["./vendor/**"])          # a leading ./ is still dropped
+    assert not ignored("pi/extensions/a.js", [".pi/**"])
+
+
+def test_code_before_design_sees_code_files_with_non_ascii_names(tmp_path):
+    # git quotes non-ASCII paths by default ("src/\345\272\224\347\224\250.py"), so the suffix never matched.
+    _project(tmp_path)
+    _git(tmp_path, "config", "core.quotepath", "true")       # git's default, whatever this machine's config says
+    _git(tmp_path, "switch", "-q", "-c", "feat/export")
+    write(tmp_path, "src/应用.py", "print(1)\n")
+    findings = scan(tmp_path)
+    assert [finding.rule for finding in findings] == ["code-before-design"]
+    assert "src/应用.py" in findings[0].message
+
+
+def test_installed_hook_files_are_not_feature_code(tmp_path):
+    # `devcircuit hooks install` leaves its script in the project. A new project's first feature commits a
+    # framework draft before any card exists, and the script made that commit fail as code before design.
+    _project(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/first")
+    write(tmp_path, ".dev-circuit/hooks/ledger_guard.py", "print(1)\n")
+    write(tmp_path, ".pi/extensions/ledger-guard.js", "export default 1\n")
+    assert scan(tmp_path) == []
+
+
+def test_the_commit_that_settles_the_framework_is_not_blocked_by_other_work(tmp_path):
+    # A framework draft is committed before the card exists. Like the design commit, it holds no code, so
+    # unrelated uncommitted code in the working tree must not block it.
+    _project(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/first")
+    write(tmp_path, "scratch.py", "print(1)\n")
+    write(tmp_path, "docs/architecture.md", "# 架构\n")
+    assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]   # still a draft
+
+    _git(tmp_path, "add", "docs/architecture.md")
+    assert scan(tmp_path) == []
+
+    _git(tmp_path, "add", "scratch.py")
+    assert [finding.rule for finding in scan(tmp_path)] == ["code-before-design"]
+
+
+def test_a_design_draft_may_delete_a_requirement_that_tests_still_cite(tmp_path):
+    # The design commit holds only the specs and the card. Deleting a requirement left its ID in the tests:
+    # dangling-ref refused the commit, and staging the fixed test tripped code-before-design. Until the card
+    # is committed the citation is tolerated; the first code commit has to clean it up.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：a\n- DEMO-2：b\n- AC-001-1：c\n")
+    write(tmp_path, "tests/test_demo.py", "# DEMO-2 DEMO:AC-001-1\n")
+    _project(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/trim")
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：a\n")
+    write(tmp_path, "specs/trim/spec.md", "# trim\n")
+    assert scan(tmp_path) == []
+
+    _git(tmp_path, "add", "docs", "specs")
+    assert scan(tmp_path) == []                                   # the design commit itself
+    _git(tmp_path, "commit", "-q", "-m", "design(trim)")
+    assert [(finding.rule, finding.path) for finding in scan(tmp_path)] == [
+        ("dangling-ref", "tests/test_demo.py"), ("dangling-ref", "tests/test_demo.py")]
+
+
+def test_a_reference_that_never_existed_is_dangling_even_in_a_draft(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：a\n")
+    write(tmp_path, "tests/test_demo.py", "# DEMO-9\n")
+    _project(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/trim")
+    write(tmp_path, "specs/trim/spec.md", "# trim\n")
+    assert [finding.rule for finding in scan(tmp_path)] == ["dangling-ref"]
+
+
+def test_code_before_design_points_bug_fixes_to_another_branch(tmp_path):
+    # A bug fix has no card. On feat/<name> the gate used to answer "commit the design first", which sent
+    # the agent to write a card for a bug.
+    _project(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/fix-trim")
+    write(tmp_path, "src/app.py", "print(1)\n")
+    assert "fix/" in scan(tmp_path)[0].message
+
+
+def _cited(tmp_path):
+    """HEAD defines DEMO-1 and DEMO-2, and a test cites DEMO-2."""
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：a\n- DEMO-2：b\n")
+    write(tmp_path, "tests/test_demo.py", "# DEMO-2\n")
+    _project(tmp_path)
+
+
+def _delete_demo_2(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：a\n")
+    return [finding.rule for finding in scan(tmp_path)]
+
+
+@pytest.mark.parametrize("branch", ["main", "fix/trim", "feat/trim"])
+def test_only_a_feature_draft_may_leave_a_deleted_requirement_cited(tmp_path, branch):
+    # The tolerance is for the design commit of feat/<name> and nothing else. Elsewhere the citation would
+    # reach the trunk; on a feat/ branch with no card being drafted, no later commit would ever report it.
+    _cited(tmp_path)
+    if branch != "main":
+        _git(tmp_path, "switch", "-q", "-c", branch)
+    if branch == "fix/trim":
+        write(tmp_path, "specs/trim/spec.md", "# trim\n")      # a card of the same name changes nothing here
+    assert _delete_demo_2(tmp_path) == ["dangling-ref"]
+
+
+def test_once_the_card_is_committed_a_deleted_requirement_must_not_stay_cited(tmp_path):
+    _cited(tmp_path)
+    _git(tmp_path, "switch", "-q", "-c", "feat/trim")
+    write(tmp_path, "specs/trim/spec.md", "# trim\n")
+    _git(tmp_path, "add", "specs")
+    _git(tmp_path, "commit", "-q", "-m", "design(trim)")
+    assert _delete_demo_2(tmp_path) == ["dangling-ref"]
+
+
+def test_the_tolerance_reads_capability_specs_the_way_the_check_does(tmp_path):
+    # Only what counted as a requirement at HEAD is tolerated. A BOM, table rows and legacy IDs are read as
+    # they are in the working tree; notes in a subfolder, the README and ignored files define nothing.
+    write(tmp_path, "docs/requirements/订单.md", chr(0xFEFF) + "代号：ORDER\n| ORDER-1 | a |\n- AC-001-1：b\n")
+    write(tmp_path, "docs/requirements/notes/ideas.md", "- ORDER-7：maybe\n")
+    write(tmp_path, "docs/requirements/README.md", "- ORDER-8：example\n")
+    write(tmp_path, "docs/requirements/old.md", "代号：ORDER\n- ORDER-9：gone\n")
+    write(tmp_path, ".dcuignore", "docs/requirements/old.md\n")
+    write(tmp_path, "tests/test_order.py", "# ORDER-1 ORDER:AC-001-1\n")
+    write(tmp_path, "tests/test_other.py", "# ORDER-7 ORDER-8 ORDER-9\n")
+    _project(tmp_path)
+    _git(tmp_path, "config", "core.quotepath", "true")
+    _git(tmp_path, "switch", "-q", "-c", "feat/trim")
+    write(tmp_path, "docs/requirements/订单.md", "代号：ORDER\n- ORDER-2：c\n")
+    write(tmp_path, "specs/trim/spec.md", "# trim\n")
+
+    assert [(finding.rule, finding.path) for finding in scan(tmp_path)] == [("dangling-ref", "tests/test_other.py")] * 3

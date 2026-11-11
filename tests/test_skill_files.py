@@ -180,7 +180,7 @@ def test_drafts_have_a_way_back():
     # later session must not mistake an uncommitted card for a settled one.
     skill = read("SKILL.md")
     assert "还原改过的能力规格" in skill
-    assert "改能力规格或 `docs/architecture.md` 的草稿" in skill
+    assert "回 ③ 改能力规格的草稿" in skill
     assert "卡还没提交就是草稿" in skill
 
 
@@ -203,3 +203,56 @@ def test_feature_drafts_hold_only_specs_and_the_card():
     skill = read("SKILL.md")
     assert "草稿只有能力规格和卡" in skill
     assert "实现时随代码提交" in skill
+
+
+def test_a_bug_fix_has_its_own_branch_and_its_own_way_home():
+    # The fast lane said only "fix + test". Walked literally, a fix on feat/<name> was refused by
+    # code-before-design, a fix on the trunk skipped acceptance, and a review had no inputs without a card.
+    skill, reviewer = read("SKILL.md"), read("reviewer.md")
+    lane = next(line for line in skill.splitlines() if line.startswith("| bug |"))
+    assert "从主干切" in lane and "`fix/<名>`" in lane and "不写卡" in lane
+    assert "用户确认后" in lane and "交付报告" in lane                      # a fix is accepted before it is merged
+    assert "不跑 `devcircuit close`" in lane and "不记账本" in lane
+    fast = next(line for line in skill.split("## 5.")[1].split("## 6.")[0].splitlines() if "快车道没有卡" in line)
+    assert "修复先提交" in fast and "devcircuit context --ids" in fast and "`git diff <base>...HEAD`" in fast
+    given = next(line for line in reviewer.split("### 输入")[1].split("###")[0].splitlines() if "快车道的 bug" in line)
+    assert "devcircuit context --ids" in given
+    assert "`fix/<名>`" in read("templates/AGENTS.md")
+
+
+def test_a_structure_change_mid_feature_goes_back_to_framework_design():
+    # ④ said to redraft docs/architecture.md in ③, while ③ says drafts hold only specs and the card and a
+    # framework-summary change is framework design. Following ④ skipped the structure review.
+    change = next(line for line in read("SKILL.md").splitlines() if "设计变了" in line and "design-change" in line)
+    assert "回 ③ 改能力规格的草稿" in change
+    assert "要改框架摘要回 ②" in change
+    assert "`docs/architecture.md` 的草稿" not in change
+
+
+def test_the_reviewer_runs_commands_without_changing_the_project():
+    # "Read-only reviewer" contradicted "trigger the failure paths first": a reviewer that cannot run
+    # commands skips the probes, and one that runs them in the workspace leaves files that block close.
+    skill, reviewer = read("SKILL.md"), read("reviewer.md")
+    assert "只读子 agent" not in skill
+    assert "不改、不提交项目里的文件" in skill and "要能执行命令" in skill
+    every_mode = next(line for line in reviewer.splitlines() if line.startswith("所有模式都要遵守"))
+    assert "不改、不提交项目里的文件" in every_mode                        # draft reviews share the workspace too
+    probe = reviewer.split("### 先动手试")[1].split("###")[0]
+    assert "项目外的临时副本" in probe and "`git status`" in probe
+    assert "git worktree remove --force" in probe                          # a copy with leftovers is not removed otherwise
+    assert "不真跑" in probe
+
+
+def test_setup_says_to_commit_what_hooks_install_leaves():
+    left = next(line for line in read("setup.md").splitlines() if "在主干上提交" in line)
+    assert "hook 脚本" in left and "`.gitignore`" in left
+
+
+def test_the_skill_says_how_a_deleted_requirement_gets_through_the_commits():
+    # spec_check tolerates citations of a requirement the draft deletes only while the card is uncommitted
+    # and HEAD still defines it: so specs and card go in one commit, and later deletions take their citations along.
+    skill = read("SKILL.md").splitlines()
+    settled = next(line for line in skill if line.startswith('- "定了"之后'))
+    assert "同一个提交" in settled and "设计提交照样能过" in settled and "第一个实现提交" in settled
+    change = next(line for line in skill if "设计变了" in line and "design-change" in line)
+    assert "卡提交之后删掉的编号" in change and "同一个提交" in change

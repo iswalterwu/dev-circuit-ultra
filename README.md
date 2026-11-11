@@ -21,7 +21,7 @@ request → ① Classify ─┬─ continue or correct a feature in progress ─
                       ├─ change an existing capability ─┐
                       ├─ new capability ────────────────┴─ four fit questions ─all yes─→ ③
                       │                                                       └any no → ② Framework design → ③
-                      └─ bug → fast lane: fix + test, review when it qualifies
+                      └─ bug → fast lane: fix on a fix/ branch + test, review when it qualifies
 ③ Feature design → ④ Build slices → ⑤ Review + one fix round → ⑥ Deliver
 ```
 
@@ -29,7 +29,7 @@ request → ① Classify ─┬─ continue or correct a feature in progress ─
 2. **Framework design** (when the framework cannot take it): name the gap, offer two or three structures with trade-offs and a recommendation, and clarify until the user is ready to settle it. The chosen structure is drafted into `docs/architecture.md`, which opens with a framework summary of at most 60 lines, and an independent structure review checks the draft before the user settles it.
 3. **Feature design**: on a `feat/<feature>` branch, draft the requirement text in the capability spec and start the card; every new command or interface gets at least one failure requirement. Then send a design summary in the conversation, one line per requirement change. Nothing is committed and no code changes until the user settles it; then the drafts are committed and the decision and the rejected options are recorded with `devcircuit ledger add`. More than 12 requirement changes, or three or more capability specs: propose a split first.
 4. **Build**: each session starts with `devcircuit context --feature <feature>` and reads only the card, the requirement text this feature touches and the related tests. One end-to-end slice at a time; tests carry the requirement IDs they prove.
-5. **Review + one fix round**: when the feature is done and before acceptance, a read-only reviewer in a fresh context reviews once and exercises the failure paths first. Key features (over the split threshold but not split, or touching a risk item) also get a requirement review before they are settled and, with two or more slices, a skeleton review after the first slice. Must-fix items get one fix round and one re-check each time.
+5. **Review + one fix round**: when the feature is done and before acceptance, a reviewer in a fresh context, which does not change project files, reviews once and exercises the failure paths first. Key features (over the split threshold but not split, or touching a risk item) also get a requirement review before they are settled and, with two or more slices, a skeleton review after the first slice. Must-fix items get one fix round and one re-check each time.
 6. **Deliver**: after the user accepts, `devcircuit close` runs the checks, cross-checks the ledger, deletes the card, commits, and records the close. The final reply is the delivery report: what changed, how to verify, review result, potential issues, next steps.
 
 The user takes part in three places only: framework clarification (when needed), feature clarification, and acceptance.
@@ -142,7 +142,7 @@ The demo creates a throwaway project and an external ledger and walks one featur
 
 **What happens when the design changes?**
 
-Go back to feature design: edit the draft of the capability spec or `docs/architecture.md` (overwrite or delete the old text) and send only what changed. Once the user settles it, commit, then change code and tests, and record the rejected old decision with `devcircuit ledger add --kind design-change`.
+Go back to feature design: edit the draft of the capability spec (overwrite or delete the old text) and send only what changed. Once the user settles it, commit, then change code and tests, and record the rejected old decision with `devcircuit ledger add --kind design-change`. A change to the framework summary goes back to framework design; detail in `docs/architecture.md` is committed with the code.
 
 **What if the development agent needs an earlier design?**
 

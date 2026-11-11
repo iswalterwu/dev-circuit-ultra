@@ -49,8 +49,37 @@ def _git(root: Path, *args: str, stdin: str | None = None) -> subprocess.Complet
                           encoding="utf-8", errors="replace", input=stdin)
 
 
+def _home(project: Path) -> Path:
+    """Where guard.json lives: the project, or its main working tree when the project is a linked git worktree.
+
+    guard.json is machine-local and gitignored, so a worktree never has its own copy. Without this the
+    ledger looked unconfigured there: `ledger add` failed and `devcircuit close` skipped the records.
+    """
+    if (project / GUARD).is_file():
+        return project
+    main = _main_tree(project)
+    return main if main and (main / GUARD).is_file() else project
+
+
+def _main_tree(project: Path) -> Path | None:
+    """The main working tree when `project` is the top level of a linked git worktree, else None.
+
+    A folder inside a working tree is not the project: the card and the capability specs are looked up
+    under the folder given, so falling back from src/ would check the ledger against nothing.
+    """
+    try:
+        found = _git(project, "rev-parse", "--show-prefix", "--git-dir", "--git-common-dir")
+    except OSError:
+        return None
+    lines = found.stdout.split("\n")
+    if found.returncode != 0 or len(lines) < 3 or lines[0]:
+        return None
+    git_dir, common = ((project / line.strip()).resolve() for line in lines[1:3])
+    return common.parent if git_dir != common else None
+
+
 def _guard(project: Path) -> dict:
-    guard = project / GUARD
+    guard = _home(project) / GUARD
     if not guard.is_file():
         return {}
     try:
@@ -63,7 +92,7 @@ def _guard(project: Path) -> dict:
 
 
 def configured(project: Path) -> bool:
-    return bool(os.environ.get("DEVCIRCUIT_LEDGER")) or (project / GUARD).is_file()
+    return bool(os.environ.get("DEVCIRCUIT_LEDGER")) or (_home(project) / GUARD).is_file()
 
 
 def human_side(project: Path) -> bool:
@@ -76,8 +105,10 @@ def resolve(project: Path) -> tuple[Path, str]:
 
     DEVCIRCUIT_LEDGER / DEVCIRCUIT_PROJECT win when set: the ledger side of a container setup
     mounts the ledger at its own path. Otherwise <project>/.dev-circuit/guard.json decides, and a
-    relative path there is resolved from the project root, as the hook does.
+    relative path there is resolved from the project root, as the hook does. In a linked git worktree
+    the main working tree's guard.json and name are used, so every worktree files under one project.
     """
+    home = _home(project)
     raw = _guard(project)
     environment = os.environ.get("DEVCIRCUIT_LEDGER")
     if not environment and raw.get("ledger_side") == HUMAN_SIDE:
@@ -90,10 +121,13 @@ def resolve(project: Path) -> tuple[Path, str]:
         raise LedgerError(f"{GUARD.as_posix()} 里的 ledger 必须是路径字符串")
     ledger = Path(os.path.expanduser(location))
     if not ledger.is_absolute():
-        ledger = ledger.resolve() if environment else project.resolve() / ledger
+        ledger = ledger.resolve() if environment else home.resolve() / ledger
     if not (ledger / "entries").is_dir():
         raise LedgerError("配置的账本目录不存在或不是账本；请人工检查 guard.json 或 DEVCIRCUIT_LEDGER")
-    name = os.environ.get("DEVCIRCUIT_PROJECT") or raw.get("project") or project.resolve().name
+    # A worktree may carry its own guard.json (copied in, or written by hooks install there): the records
+    # still belong to the project, not to the worktree's folder name.
+    name = (os.environ.get("DEVCIRCUIT_PROJECT") or raw.get("project")
+            or (_main_tree(project) or home).resolve().name)
     return ledger, str(name)
 
 

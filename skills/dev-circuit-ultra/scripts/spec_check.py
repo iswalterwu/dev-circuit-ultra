@@ -1,7 +1,7 @@
-"""spec_check v0.7.0
+"""spec_check v0.7.1
 
 用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段；
-在 feat/<功能> 分支上，卡提交之前不许改代码（提交草稿的那次提交除外）。
+在 feat/<功能> 分支上，卡提交之前不许改代码（提交草稿的那次提交除外；卡提交之前，草稿删掉的编号还被引用也放行）。
 在研功能的卡（specs/）不参与检查：要求直接写在能力规格里。
 用法：python spec_check.py [--root DIR] [--json] [--report] [--ignore GLOB]... [--ignore-rule RULE]...
 输出：每个问题一行；没有问题时打印一行"通过"和能力规格、要求的数量。--list-rules 列出每条规则查什么。
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -47,6 +47,9 @@ SKIPPED_DIRS = frozenset({
 # The vendored guards describe the accepted formats, so their own examples must
 # not count as references to project requirements.
 VENDORED_GUARDS = frozenset({"scripts/doc_guard.py", "scripts/spec_check.py"})
+# What `devcircuit hooks install` leaves in the project: tooling, not the feature's code.
+INSTALLED_HOOKS = frozenset({".dev-circuit/hooks/ledger_guard.py", ".pi/extensions/ledger-guard.js"})
+ARCHITECTURE = "docs/architecture.md"
 CODE_EXTENSIONS = frozenset({
     ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue",
     ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".sh", ".ps1",
@@ -65,9 +68,11 @@ RULE_HELP = {
     "bad-header": "能力规格没有恰好一行文件头“代号：<CODE>”（CODE 为 2–8 个大写字母，也认 Code: / capability:），"
                   "代号在别的能力规格里已用过，或要求编号的前缀和本文件代号不符",
     "dup-id": "同一个要求编号定义了不止一次（跨文件也算）",
-    "dangling-ref": "代码或测试里引用的要求编号（前缀是已声明的代号），在能力规格里不存在",
+    "dangling-ref": "代码或测试里引用的要求编号（前缀是已声明的代号），在能力规格里不存在；"
+                    "feat/<功能> 的卡提交之前，草稿删掉的编号还被引用不算，卡提交之后要随代码改掉",
     "code-before-design": "在 feat/<功能> 分支上改了代码（已暂存、未暂存或未跟踪），但 specs/<功能>/spec.md 还没提交；"
-                          "只在有 specs/ 目录的 git 仓库里查",
+                          "只在有 specs/ 目录的 git 仓库里查；devcircuit 装的 hook 脚本不算代码，"
+                          "只提交 docs/architecture.md 的框架提交放行",
 }
 SCOPE = ("范围：docs/requirements/ 下除 README.md 外的 .md；引用在这些后缀的文件里找："
          + " ".join(sorted(CODE_EXTENSIONS))
@@ -95,11 +100,18 @@ def _fold(value: str) -> str:
     return value.casefold() if os.name == "nt" else value
 
 
+def _plain(pattern: str) -> str:
+    """Drop a leading "./" or "/"; a dot that starts a name (".github") stays."""
+    while pattern.startswith("./"):
+        pattern = pattern[2:]
+    return pattern.lstrip("/")
+
+
 def path_is_ignored(relative: str, patterns) -> bool:
     """Match a posix relative path against ignore globs (see doc_guard for rules)."""
     candidate = _fold(relative.replace("\\", "/").strip("/"))
     for raw in patterns:
-        pattern = _fold(str(raw).replace("\\", "/").strip().lstrip("./"))
+        pattern = _fold(_plain(str(raw).replace("\\", "/").strip()))
         if not pattern:
             continue
         if "/" in pattern:
@@ -231,11 +243,48 @@ def _is_test(path: Path) -> bool:
 
 def _git_lines(root: Path, *args: str) -> list[str] | None:
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
+        # core.quotepath=false: by default git prints non-ASCII paths quoted and octal-escaped, and then
+        # neither the suffix nor the path matches anything.
+        result = subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(root), *args],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
     except OSError:
         return None
     return result.stdout.splitlines() if result.returncode == 0 else None
+
+
+def _draft_removals(root: Path, patterns=()) -> set[str]:
+    """IDs defined at HEAD while feat/<name> has a card that is drafted but not committed: the draft may remove them.
+
+    The design commit holds only the specs and the card, so tests and code still cite a removed ID when it
+    is made. Those citations are cleaned up in the first code commit, when HEAD no longer defines the ID.
+    Without a card being drafted there is no such commit to come, so nothing is tolerated.
+    """
+    if not (root / "specs").is_dir():
+        return set()
+    branch = _git_lines(root, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch or not branch[0].startswith("feat/"):
+        return set()
+    feature = branch[0][len("feat/"):]
+    if (not FEATURE_NAME.match(feature) or not (root / "specs" / feature / "spec.md").is_file()
+            or _git_lines(root, "cat-file", "-e", f"HEAD:./specs/{feature}/spec.md") is not None):
+        return set()
+    identifiers: set[str] = set()
+    # The same files _capability_files reads: direct children of docs/requirements, minus README and ignores.
+    for name in _git_lines(root, "ls-tree", "--name-only", "HEAD", "docs/requirements/") or []:
+        if not name.endswith(".md") or name.rsplit("/", 1)[-1] == "README.md" or path_is_ignored(name, patterns):
+            continue
+        lines = [line.lstrip(chr(0xFEFF)) for line in _git_lines(root, "show", f"HEAD:./{name}") or []]
+        code = next((match.group(1) for line in lines if (match := HEADER.fullmatch(line))), None)
+        for line in lines:
+            match = DEFINITION.match(line) or TABLE_DEFINITION.match(line)
+            if not match:
+                continue
+            identifier = match.group(1)
+            if not (identifier.startswith("AC-") and identifier.count("-") == 2):
+                identifiers.add(identifier)
+            elif code:
+                identifiers.add(f"{code}:{identifier}")  # legacy IDs are cited as <CODE>:AC-xxx-y
+    return identifiers
 
 
 def _design_gate(root: Path, patterns) -> list[Finding]:
@@ -252,7 +301,8 @@ def _design_gate(root: Path, patterns) -> list[Finding]:
         changed.update(_git_lines(root, *args) or [])
     code = sorted(path for path in changed
                   if Path(path).suffix.lower() in CODE_EXTENSIONS
-                  and path not in VENDORED_GUARDS and not path_is_ignored(path, patterns))
+                  and path not in VENDORED_GUARDS and path not in INSTALLED_HOOKS
+                  and not path_is_ignored(path, patterns))
     if not code:
         return []
     if not FEATURE_NAME.match(feature):
@@ -264,9 +314,12 @@ def _design_gate(root: Path, patterns) -> list[Finding]:
         return []
     if not staged.intersection(code) and _git_lines(root, "cat-file", "-e", f":./{card}") is not None:
         return []  # the design commit itself: the card is staged and no code is
+    if not staged.intersection(code) and ARCHITECTURE in staged:
+        return []  # the framework commit: it comes before the card exists, and holds no code either
     return [Finding("code-before-design", card, 0,
                     f"分支 feat/{feature} 上改了 {len(code)} 个代码文件（如 {code[0]}），但卡还没提交（或已经收尾删掉）："
-                    "定了之前只写能力规格和卡的草稿；用户说“定了”之后先单独提交设计，再写代码")]
+                    "定了之前只写能力规格和卡的草稿；用户说“定了”之后先单独提交设计，再写代码。"
+                    "修 bug 或不属于这个功能的改动不放在 feat/ 分支上（bug 用 fix/<名>）")]
 
 
 def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
@@ -279,8 +332,13 @@ def scan(root: Path, ignores=(), ignored_rules=(), ignore_file=None,
 def _scan(root: Path, patterns, ignored_rules=()) -> tuple[list[Finding], int]:
     """Like scan(), and also return how many requirements are defined."""
     findings, codes, requirements, legacy, _ = _requirements(root, patterns)
+    tolerated = None
     for path, number, identifier in _references(root, codes, patterns):
         if identifier in requirements or identifier in legacy:
+            continue
+        if tolerated is None:
+            tolerated = _draft_removals(root, patterns)
+        if identifier in tolerated:
             continue
         findings.append(Finding("dangling-ref", path.as_posix(), number, f"引用的编号不存在：{identifier}"))
     findings.extend(_design_gate(root, patterns))

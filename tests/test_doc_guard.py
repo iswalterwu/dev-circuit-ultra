@@ -317,3 +317,11 @@ def test_architecture_needs_a_short_summary(tmp_path: Path) -> None:
     findings = scan(tmp_path)
     assert [finding.rule for finding in findings] == ["arch-summary"]
     assert "61" in findings[0].message
+
+
+def test_ignore_patterns_may_start_with_a_dot() -> None:
+    # Same slip as spec_check: `.lstrip("./")` turned `.github/**` into `github/**`, which never matched.
+    ignored = doc_guard.path_is_ignored
+    assert ignored(".github/workflows/notes.md", [".github/**"])
+    assert ignored("vendor/a.md", ["./vendor/**"])           # a leading ./ is still dropped
+    assert not ignored("github/notes.md", [".github/**"])

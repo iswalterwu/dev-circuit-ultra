@@ -1,4 +1,4 @@
-"""doc_guard v0.4.0
+"""doc_guard v0.4.1
 
 用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径、断链，以及 agent 整份读入的文件有没有超出体积上限。
 用法：python doc_guard.py [--root DIR] [--json] [--ignore GLOB]... [--ignore-rule RULE]...
@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -122,6 +122,13 @@ def _fold(value: str) -> str:
     return value.casefold() if os.name == "nt" else value
 
 
+def _plain(pattern: str) -> str:
+    """Drop a leading "./" or "/"; a dot that starts a name (".github") stays."""
+    while pattern.startswith("./"):
+        pattern = pattern[2:]
+    return pattern.lstrip("/")
+
+
 def matches(relative: str, patterns) -> bool:
     """Match a posix relative path against path globs (used for ignore and include).
 
@@ -133,7 +140,7 @@ def matches(relative: str, patterns) -> bool:
     """
     candidate = _fold(relative.replace("\\", "/").strip("/"))
     for raw in patterns:
-        pattern = _fold(str(raw).replace("\\", "/").strip().lstrip("./"))
+        pattern = _fold(_plain(str(raw).replace("\\", "/").strip()))
         if not pattern:
             continue
         if "/" in pattern:

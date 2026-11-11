@@ -129,7 +129,7 @@ def _adopted_trunk(root: Path) -> tuple[str, str] | None:
         if _git_quiet(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is not None:
             return name, "本地已有的分支"
     current = _git_quiet(root, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if current and not current.startswith("feat/"):
+    if current and not current.startswith(("feat/", "fix/")):
         return current, "当前分支"
     return None
 

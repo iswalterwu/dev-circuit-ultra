@@ -2,6 +2,36 @@
 
 只记对使用者有影响的变化。版本号对应 git tag；`doc_guard` / `spec_check` 的脚本版本是各自独立的一条线，不跟包版本走。
 
+## 未发布
+
+照 0.7.0 的技能文字按场景走查时确认的 7 个问题：照文字做会被检查拦住、两处说法相反，或者在某种环境下不报错地漏掉。
+
+### 流程
+
+- bug 快车道写明在 `fix/<名>` 分支上修，不写卡；用户确认后合并并写交付报告，不跑 `devcircuit close`，不记账本。要审核时，交给 reviewer 的是被违反的要求原文（`devcircuit context --ids`）、基线和 diff。AGENTS 模板的分支约定加上 `fix/<名>`。
+- 实现中途设计变了：回 ③ 只改能力规格的草稿；要改框架摘要回 ②，`docs/architecture.md` 的细节随代码提交。④ 里“改 `docs/architecture.md` 的草稿”的写法和 ③ 相反，照它做会跳过结构审，已去掉。
+- 审核子 agent 不写成“只读”：它不改、不提交项目里的文件，但要能执行命令。`reviewer.md` 写明出错路径在项目外的临时副本里跑，或者跑完清理干净；真实资金、真实外部调用和不可逆的操作不真跑。
+- `setup.md`：`hooks install` 留下的 hook 脚本和 `.gitignore` 改动要在主干上提交。
+
+### 命令与检查器
+
+- `spec_check` 0.7.1、`doc_guard` 0.4.1：白名单模式可以以点开头（`.pi/**`、`.github/**`）。开头的点会被削掉，这类模式写了不生效，也没有提示。
+- `spec_check` 0.7.1：
+  - `feat/<功能>` 的卡写了还没提交时，草稿删掉的要求还被测试或代码引用不报 `dangling-ref`；卡提交之后照报，引用随第一个实现提交改掉；没有卡的分支和别的分支照报。设计提交不再被 `dangling-ref` 和 `code-before-design` 轮流拦下。
+  - 只暂存 `docs/architecture.md`、没有暂存代码的框架提交，不被工作区里别的代码改动拦下；`devcircuit hooks install` 装的 hook 脚本不算代码。新项目的第一个功能能提交框架草稿了。
+  - 文件名含中文等非 ASCII 字符的代码文件，`code-before-design` 不再看不见。
+  - `code-before-design` 的提示加了一句：修 bug 不放在 `feat/` 分支上。
+- `devcircuit context`、`close`、`ledger check`：能力规格的文件名含非 ASCII 字符时，分支上新增、改写、删除的要求不再漏掉。
+- 账本在 git worktree 里可用：worktree 里没有 `guard.json` 时用主工作区的那份，记录记在同一个项目名下。此前 `ledger add` 报“没有配置账本”，`devcircuit close` 不写记录就收尾。
+- `devcircuit hooks install` 的输出提示在主干上提交它留下的文件。
+- `devcircuit init --adopt` 猜主干时，`fix/` 开头的当前分支和 `feat/` 一样不当主干。
+
+### 升级
+
+1. `devcircuit vendor` 更新项目里的两个检查器。
+2. `devcircuit sync` 同步新版技能。装过 hook 的项目，把 hook 脚本和 `.gitignore` 的改动在主干上提交。
+3. AGENTS.md 第 5 节的分支一行照新模板加上 `fix/<名>`。
+
 ## 0.7.0
 
 ### 流程

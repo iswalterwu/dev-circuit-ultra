@@ -329,3 +329,20 @@ def test_map_marks_a_card_that_is_not_committed_as_a_draft(tmp_path: Path, capsy
     lines = out.splitlines()
     assert any("add-import" in line and "草稿" in line for line in lines)
     assert not any("add-export" in line and "草稿" in line for line in lines)
+
+
+def test_a_capability_file_with_a_non_ascii_name_is_compared_too(tmp_path: Path) -> None:
+    # git quotes non-ASCII paths by default, so "docs/requirements/订单.md" came back escaped, failed the
+    # suffix check, and the branch's new requirements were silently missing from context, close and ledger check.
+    project(tmp_path)
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-q", "-m", "base")
+    git(tmp_path, "config", "core.quotepath", "true")        # git's default, whatever this machine's config says
+    git(tmp_path, "switch", "-q", "-c", "feat/orders")
+    write(tmp_path, "docs/requirements/订单.md", "# 订单\n代号：ORDER\n\n- ORDER-1：下单。\n  - 例：下单成功。\n")
+
+    base = context_module.merge_base(tmp_path, None)
+    added, _, _ = context_module.requirement_changes(tmp_path, base[1])
+
+    assert list(added) == ["ORDER-1"]

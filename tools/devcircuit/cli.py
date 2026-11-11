@@ -225,6 +225,9 @@ def _install_hooks(args) -> int:
     if ignored_now:
         print(f"已把 {'、'.join(ignored_now)} 加进 .gitignore：它们记录的是本机路径。", file=out)
     print(f"账本：{config['ledger']}", file=out)
+    leftover = "、".join(([".gitignore"] if ignored_now else []) + [Path(relative).as_posix()])
+    print(f"下一步：{leftover} 还没提交的话，在主干上提交；留着不提交，devcircuit close 会因为工作区不干净而拒绝收尾。",
+          file=out)
     print("", file=out)
     if args.harness == "pi":
         print("pi 会在可信项目里自动加载 .pi/extensions/*.js；/reload 生效。", file=out)

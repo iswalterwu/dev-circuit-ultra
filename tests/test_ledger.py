@@ -262,3 +262,78 @@ def test_card_names_outside_the_rule_are_reported_readably(tmp_path: Path, capsy
     code, out, _ = ledger(capsys, "check", "--project", str(project))
     assert code == 1
     assert "[bad-feature-name] 导出" in out and "design-missing" not in out
+
+
+def test_a_linked_worktree_uses_the_projects_ledger(tmp_path: Path, capsys) -> None:
+    # guard.json is machine-local and gitignored, so a git worktree has no copy of it. `ledger add` said no
+    # ledger was configured, and `close` then closed the feature without writing any record.
+    project, ledger_root = setup(tmp_path)
+    tree = tmp_path / "wt-export"
+    git(project, "worktree", "add", "-q", "-b", "feat/x", str(tree))
+    write(tree, "specs/x/spec.md", CARD.format(framework="不变"))
+    git(tree, "add", "-A")
+    git(tree, "commit", "-q", "-m", "design(x)")
+    capsys.readouterr()
+
+    code, out, _ = ledger(capsys, "add", "--project", str(tree), "--feature", "x", "--kind", "design",
+                          "--decision", "导出")
+
+    assert code == 0 and out.startswith("已记录：")
+    assert [record["kind"] for record in entries(ledger_root, "x")] == ["design"]   # filed under the project
+    assert not (ledger_root / "entries" / "wt-export").exists()                     # not under the worktree's name
+    assert ledger(capsys, "check", "--project", str(tree))[0] == 0
+
+
+def test_a_linked_worktree_closes_into_the_projects_ledger(tmp_path: Path, capsys) -> None:
+    # `close` asks whether a ledger is configured before it writes: in a worktree it used to say no, close
+    # the feature and write nothing. The worktree sits inside the project here, so a relative ledger path
+    # in guard.json only resolves if it is read from the main working tree.
+    project, ledger_root = setup(tmp_path)
+    write(project, ".dev-circuit/guard.json", json.dumps({"ledger": "../ledgers/app"}))
+    write(project, ".gitignore", ".dev-circuit/\n.trees/\n")
+    git(project, "commit", "-q", "-am", "ignore worktrees")
+    tree = project / ".trees" / "wt"
+    git(project, "worktree", "add", "-q", "-b", "feat/x", str(tree))
+    write(tree, "specs/x/spec.md", CARD.format(framework="不变"))
+    git(tree, "add", "-A")
+    git(tree, "commit", "-q", "-m", "design(x)")
+    assert ledger(capsys, "add", "--project", str(tree), "--feature", "x", "--kind", "design",
+                  "--decision", "导出")[0] == 0
+
+    assert cli.main(["close", "x", "--project", str(tree), "--summary", "交付导出"]) == 0
+
+    assert "没有配置账本" not in capsys.readouterr().out
+    assert [record["kind"] for record in entries(ledger_root, "x")] == ["design", "close"]
+
+
+def test_a_folder_inside_the_project_is_not_the_project(tmp_path: Path, capsys) -> None:
+    # The worktree fallback must not make every folder of the repository look configured: the card and the
+    # capability specs are looked up under the folder given, so a check from src/ would pass on nothing.
+    project, _ = setup(tmp_path)
+    (project / "src").mkdir()
+
+    code, out, err = ledger(capsys, "check", "--project", str(project / "src"))
+
+    assert code == 2 and "没有配置账本" in out + err
+
+    tree = tmp_path / "wt"                                   # the same inside a linked worktree
+    git(project, "worktree", "add", "-q", "-b", "feat/x", str(tree))
+    (tree / "src").mkdir()
+    code, out, err = ledger(capsys, "check", "--project", str(tree / "src"))
+
+    assert code == 2 and "没有配置账本" in out + err
+
+
+def test_a_worktree_with_its_own_guard_file_still_files_under_the_project(tmp_path: Path, capsys) -> None:
+    project, ledger_root = setup(tmp_path)
+    tree = tmp_path / "wt-export"
+    git(project, "worktree", "add", "-q", "-b", "feat/x", str(tree))
+    write(tree, ".dev-circuit/guard.json", json.dumps({"ledger": str(ledger_root)}))   # copied in by hand
+    write(tree, "specs/x/spec.md", CARD.format(framework="不变"))
+    git(tree, "add", "-A")
+    git(tree, "commit", "-q", "-m", "design(x)")
+
+    assert ledger(capsys, "add", "--project", str(tree), "--feature", "x", "--kind", "design",
+                  "--decision", "导出")[0] == 0
+
+    assert [record["kind"] for record in entries(ledger_root, "x")] == ["design"]

@@ -124,8 +124,10 @@ def load_capabilities(root: Path) -> list[Capability]:
 
 def _git(root: Path, *args: str) -> str | None:
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
+        # core.quotepath=false: by default git prints non-ASCII paths quoted and octal-escaped, and a
+        # capability spec named 订单.md then matched nothing.
+        result = subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(root), *args],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
     except OSError:
         return None
     return result.stdout if result.returncode == 0 else None

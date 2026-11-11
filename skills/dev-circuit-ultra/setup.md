@@ -7,7 +7,7 @@
 - **同步技能**：`devcircuit sync`，把技能写进 Claude Code / agents / DSH 目录。
 - **新建**：`devcircuit init --path <项目目录> --name <项目名>`。它生成下面第 1–5 步的全部文件，执行 `git init`，并做第一次提交。
 - **接入已有仓库**：同一命令加 `--adopt`。只补缺失的文件，已有文件不覆盖，也不提交，最后报出 doc_guard 发现的旧文档问题。
-- **账本**：`devcircuit ledger init --path <项目外的私有目录>` 创建独立私有 git repo；再 `devcircuit hooks install --harness pi|claude --project <项目> --ledger <账本>`，它写 `.dev-circuit/guard.json`（本机路径，同时写进 `.gitignore`，不用再手动加）并装上 hook。之后开发 agent 只用 `devcircuit ledger add` 写、`devcircuit ledger check` 核对，hook 拦下其他访问。
+- **账本**：`devcircuit ledger init --path <项目外的私有目录>` 创建独立私有 git repo；再 `devcircuit hooks install --harness pi|claude --project <项目> --ledger <账本>`，它写 `.dev-circuit/guard.json`（本机路径，同时写进 `.gitignore`，不用再手动加）并装上 hook。之后开发 agent 只用 `devcircuit ledger add` 写、`devcircuit ledger check` 核对，hook 拦下其他访问。它在项目里留下 hook 脚本和 `.gitignore` 的改动：在主干上提交它们，再开始做功能。
 - **升级旧项目**：先跑 `devcircuit migrate --check --project <项目>`，它列出要改的地方，不动任何文件。先按它迁移进行中的功能，再同步新版技能；有未提交改动的，先问用户。
 
 本技能目录里的 `new-project.ps1`、`new-ledger.ps1` 和仓库根目录的 `sync.ps1` 只是转发到同样的实现，供 pwsh 用户使用。

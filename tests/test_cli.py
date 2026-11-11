@@ -481,3 +481,26 @@ def test_hooks_install_keeps_the_claude_snippet_out_of_git(tmp_path: Path, capsy
 
     lines = (project / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ".dev-circuit/claude-settings.hook.json" in lines
+
+
+def test_hooks_install_says_to_commit_what_it_left_in_the_project(tmp_path: Path, capsys) -> None:
+    # The hook script and the .gitignore edit stayed uncommitted and nothing said so: the first framework
+    # draft could not be committed on the feature branch, and `devcircuit close` refused the dirty tree.
+    project = tmp_path / "app"
+    ledger = tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+
+    assert cli.main(["hooks", "install", "--harness", "pi", "--project", str(project), "--ledger", str(ledger)]) == 0
+
+    [line] = [line for line in capsys.readouterr().out.splitlines() if "在主干上提交" in line]
+    assert ".pi/extensions/ledger-guard.js" in line and ".gitignore" in line
+
+
+def test_adopt_does_not_take_a_fix_branch_for_the_trunk(tmp_path: Path, capsys) -> None:
+    # Bugs are fixed on fix/<name>, which goes away after the merge just as feat/<name> does.
+    repo = _repo_on(tmp_path / "repo", "fix/first")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    capsys.readouterr()
+    assert "主干：" not in (repo / "AGENTS.md").read_text(encoding="utf-8")

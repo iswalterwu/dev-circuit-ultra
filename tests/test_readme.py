@@ -7,7 +7,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ("README.md", "README.zh-CN.md", "docs/dsh.md", "docs/ledger.md", "demo/README.md",
         "hooks/README.md", "docker/README.md")
-RETIRED = ("reviewer.json", "archivist", "五步", "five-step", "Five steps", "five steps", "收尾合并")
+RETIRED = ("reviewer.json", "archivist", "五步", "five-step", "Five steps", "five steps", "收尾合并",
+           "快车道：修 + 测试", "fast lane: fix + test", "只读 reviewer", "read-only reviewer",
+           "改能力规格或 `docs/architecture.md` 的草稿", "capability spec or `docs/architecture.md`")
 
 
 def read(name: str) -> str:
