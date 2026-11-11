@@ -34,6 +34,8 @@ request → ① Classify ─┬─ continue or correct a feature in progress ─
 
 The user takes part in three places only: framework clarification (when needed), feature clarification, and acceptance.
 
+A blanket go-ahead given in advance ("you decide", "settle the details yourself") waives none of them: only a stop the user names is skipped, just that one, and the potential issues in the delivery report say which stops were skipped; nothing runs `devcircuit close` or merges before acceptance.
+
 ## Quick start
 
 ```bash
