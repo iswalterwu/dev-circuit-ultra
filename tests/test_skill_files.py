@@ -50,6 +50,25 @@ def test_a_reply_that_answers_or_adds_is_not_the_go_ahead():
     assert "SKILL.md ③的停止点" in read("framework.md")
 
 
+def test_a_blanket_go_ahead_given_in_advance_skips_no_stop_point():
+    # Validation run on 01db5a4 (pi + deepseek-flash), prompt "由你决定怎么设计、怎么切片、是否审核、怎么收尾……
+    # 能自己拍板的细节自己定": in 2 of 3 tasks the agent stopped at neither ②③ nor ⑥, ran close and merged
+    # "按你的授权". Only a stop point the user names is skipped, only that one, and the report says which.
+    skill = read("SKILL.md")
+    intro = skill.split("## 0.")[0]
+    rule = next(line for line in intro.splitlines() if "泛泛授权" in line)
+    for blanket in ("你定", "能自己拍板的自己定", "不要照抄步骤", "怎么收尾由你定"):
+        assert f'"{blanket}"' in rule
+    assert "不免除 ②③" in rule and "定了吗" in rule and "不免除 ⑥ 的验收" in rule
+    assert "验收前不跑 `devcircuit close`、不合并" in rule and "快车道" in rule
+    assert "只跳那一处" in rule and '"潜在问题"' in rule
+    assert "设计不用给我看" in rule and "验收照样要停" in rule    # skipping the design does not skip acceptance
+    # Written once, next to the three places the user takes part; the other stop points refer back to ③.
+    assert "用户只在三处参与" in intro
+    assert skill.count("泛泛授权") == 1
+    assert all("泛泛授权" not in read(name) for name in ("framework.md", "large.md"))
+
+
 def test_review_runs_once_per_feature_with_one_fix_round():
     skill = read("SKILL.md")
     reviewer = read("reviewer.md")
