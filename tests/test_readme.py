@@ -2,6 +2,7 @@
 
 import json
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,50 @@ def test_every_asset_is_shown_by_a_doc():
     """assets/ ships in the npm package: a file no doc shows is stale weight."""
     docs = "".join(read(name) for name in DOCS)
     assert [path.name for path in sorted((ROOT / "assets").iterdir()) if path.name not in docs] == []
+
+
+def test_banner_uses_readme_tagline():
+    tagline = "Less context. Less ceremony. One feature at a time."
+    banner = ET.fromstring(read("assets/banner.svg"))
+    assert banner.get("aria-label") == f"Dev-circuit-ultra — {tagline}"
+    assert tagline in [node.text for node in banner.findall("{http://www.w3.org/2000/svg}text")]
+    assert tagline in read("README.md")
+    assert tagline in json.loads(read("package.json"))["description"]
+
+
+def test_readmes_link_xerj_badge_and_pinned_corpus():
+    contributor = "https://hub.xerj.org/contributors/iswalterwu"
+    corpus = "https://hub.xerj.org/corpus/iswalterwu--dev-circuit-ultra"
+    badge = f"[![XERJ Corpus Hub contributor]({contributor}/badge.svg)]({contributor})"
+    for name, snapshot_note in (("README.md", "pinned snapshot"),
+                                ("README.zh-CN.md", "固定版本快照")):
+        text = read(name)
+        assert text.count(badge) == 1, name
+        assert f"]({corpus})" in text, name
+        assert snapshot_note in text, name
+
+
+def test_hook_docs_do_not_promise_unbypassable_isolation():
+    claims = ("the agent cannot reach the ledger", "Not through tool calls:",
+              "agent 拿不到账本", "通过工具调用读不到", "agent 无法通过工具拿到账本")
+    for name, caveat in (("README.md", "not an unbypassable security boundary"),
+                         ("README.zh-CN.md", "不是不可绕过的安全边界"),
+                         ("hooks/README.md", "不是不可绕过的安全边界"),
+                         ("docs/ledger.md", "不是不可绕过的安全边界")):
+        text = read(name)
+        assert caveat in text, name
+        assert not any(claim in text for claim in claims), name
+
+
+def test_worktree_instructions_preserve_relative_path_targets():
+    for name, heading, terms in (
+        ("README.md", "**Does it work in a git worktree?**",
+         ("relative paths", "absolute paths", "main working tree", "`deny`", "self-check")),
+        ("README.zh-CN.md", "**能在 git worktree 里用吗？**",
+         ("相对路径", "绝对路径", "主工作区", "`deny`", "拦截自检")),
+    ):
+        section = read(name).split(heading, 1)[1].split("\n**", 1)[0]
+        assert all(term in section for term in terms), name
 
 
 def test_readmes_name_the_steps_and_commands_the_skill_uses():

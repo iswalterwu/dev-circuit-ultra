@@ -5,7 +5,7 @@ dev-circuit-ultra 把"现在怎么做"和"为什么变成现在这样"分开：
 - **现行设计**：项目里的能力规格（`docs/requirements/`）、`docs/architecture.md`（开头是框架摘要）和其他 docs。开发 agent 只读这些，并用 `devcircuit context` 按编号取需要的部分。
 - **账本**：项目外的私有 git repo，只记选定的决定、被否方案和原因。开发 agent 对它只写不读；human 用 `dev-circuit-ledger` 查。
 
-现行设计是 read model，账本是 event log。设计变了，开发 agent 原地覆盖或删除项目里的旧内容，同时用 `devcircuit ledger add` 把这次的决定和被否方案追加进账本。
+现行设计是 read model，账本是 event log。设计变了，开发 agent 原地覆盖或删除项目里的旧内容；用户定了、改动提交之后，再用 `devcircuit ledger add` 把这次的决定和被否方案追加进账本。
 
 ## 什么时候写、写什么
 
@@ -13,11 +13,11 @@ dev-circuit-ultra 把"现在怎么做"和"为什么变成现在这样"分开：
 |---|---|---|
 | 框架设计定了 | `devcircuit ledger add --kind framework` | 选定的结构、被否方案和原因、结构审结论 |
 | 功能设计定了 | `devcircuit ledger add --kind design --ids … --removed-ids …` | 选定的设计、被否方案、涉及和删掉的要求编号；重点功能加要求审结论 |
-| 设计中途改了 | `devcircuit ledger add --kind design-change` | 新的决定、被否的旧决定和原因 |
+| 设计中途改了 | `devcircuit ledger add --kind design-change --ids … --removed-ids …` | 新的决定、被否的旧决定和原因、涉及和删掉的要求编号 |
 | 收尾 | `devcircuit close` 自动写 `close` 记录 | 一句话交付、审核结果、close 提交 |
 | 核对出不一致 | `devcircuit ledger add --kind correction` | 补记或更正；原因不清楚时先问 human |
 
-每个功能一般 2–3 条，不用另开会话。`add` 只回一行"已记录：<编号>"，不回显内容。记录格式见账本里的 `schema.md`。
+每个功能一般 2–3 条，不用另开会话。`ledger add` 每次都要带 `--feature <feature>`、`--kind`（见上表）和 `--decision "<选定的决定>"`；被否方案和原因用 `--rejected "<方案>：<原因>"`（可重复），为什么这样定用 `--reason`，审核结论用 `--review`（跳过要求审或结构审时写"用户明说不审"），`--commit` 默认是写入时的 HEAD，`--project` 默认是当前目录。`add` 只回一行"已记录：<编号>"，不回显内容。记录格式见账本里的 `schema.md`。
 
 ## 核对
 
@@ -41,25 +41,30 @@ dev-circuit-ultra 把"现在怎么做"和"为什么变成现在这样"分开：
 
 ## 隔离
 
-隔离分四档，成本和保证各不相同。默认从 hook 起步：它拦的是真实的工具调用，不是模型自觉。
+隔离分四档，成本和保证各不相同。默认从 hook 起步：它用路径匹配拦截能识别出的工具调用，减少误读，不靠模型自觉；但它不是不可绕过的安全边界，严格隔离需要 OS 权限或不挂载账本的容器。hook 只有 pi 和 Claude Code 两种（`--harness pi` / `--harness claude`）；用别的 agent 时怎么配，见 [README 快速开始](../README.zh-CN.md#快速开始)。没有 `guard.json` 时，`ledger add` / `check` 报没有配置账本，`close` 跳过账本核对和收尾记录。
 
 | 级别 | 做法 | 能保证什么 | 开发侧能不能 `ledger add` / `check` |
 |---|---|---|---|
 | 弱 | prompt 里写"不要读账本" | 只能防误读 | 能 |
-| **中（默认）** | `devcircuit hooks install`：工具调用层拦截 | agent 拿不到账本；跨平台、可审查 | 能 |
+| **中（默认）** | `devcircuit hooks install`：工具调用层拦截（pi、Claude Code） | 拦截能识别出的账本路径访问，不提供文件系统隔离；跨平台、可审查 | 能 |
 | 强 | 账本属主是另一个 OS 用户 / ACL 不授权给开发进程 | 开发进程没有读权限 | 不能，由 human 在账本一侧跑 |
 | 最强 | 开发容器不挂载账本、无凭证 | 进程内没有可达路径 | 不能，由 human 在账本一侧跑 |
 
-hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，`hooks install` 会把它写进 `.gitignore`）：
+先用 `ledger init` 在项目外建账本（`hooks install` 不建），再装 hook。hook 装在项目里，配置写在 `<project>/.dev-circuit/guard.json`（本机路径，`hooks install` 会把它写进 `.gitignore`）：
 
 ```powershell
+devcircuit ledger init --path D:\ledgers\my-app
 devcircuit hooks install --harness pi --project D:\code\my-app --ledger D:\ledgers\my-app
 devcircuit hooks status --project D:\code\my-app
 ```
 
-hook 也不许 agent 读 `guard.json` 本身，那里面就有账本路径。`devcircuit ledger add` / `check` 的命令行里不带账本路径，hook 放行；路径由 CLI 进程自己从 `guard.json` 读，相对路径按项目根解析。
+装完要在主干上提交的文件、Claude Code 还要合并的 `.claude/settings.local.json`，见 [README 快速开始](../README.zh-CN.md#快速开始)。
 
-hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不用账本路径的命令（遍历文件系统）仍可能发现可读目录。要那种保证，用强 / 最强；那两档里开发侧碰不到账本，在开发侧的 `guard.json` 里写 `"ledger_side": "human"`：`ledger add` / `check` 在开发侧会说明账本在 human 一侧，`devcircuit close` 跳过账本步骤，并打印账本一侧要补的命令。账本一侧用 `DEVCIRCUIT_LEDGER`、`DEVCIRCUIT_PROJECT` 指向挂载的账本（容器参考见 [`docker/README.md`](../docker/README.md)）。完整说明见 [`hooks/README.md`](../hooks/README.md)。
+hook 的路径匹配也覆盖 `guard.json` 本身，那里面就有账本路径。`devcircuit ledger add` / `check` 的命令行里不带账本路径，hook 放行；路径由 CLI 进程自己从 `guard.json` 读，相对路径按项目根解析。git worktree 里 CLI 和 hook 各自怎么找 `guard.json`、在 worktree 里开会话之前要补什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。
+
+hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不用账本路径的命令（遍历文件系统）仍可能发现可读目录。要那种保证，用强 / 最强；那两档里开发侧碰不到账本，在开发侧的 `guard.json` 里写 `"ledger_side": "human"`：`ledger add` / `check` 在开发侧会说明账本在 human 一侧，`devcircuit close` 跳过账本步骤，并打印账本一侧要补的命令。
+
+账本一侧要设 `DEVCIRCUIT_LEDGER` 指向账本，强档没有挂载也要设：不设时账本一侧同样读到 `ledger_side`，`ledger add` / `check` 照样拒绝。`DEVCIRCUIT_PROJECT` 写账本里的项目名：不设就用 `guard.json` 的 `project`，再没有就用项目目录名，容器里挂在 `/work` 的项目会记成 `work`（容器参考见 [`docker/README.md`](../docker/README.md)）。四档隔离和 hook 的完整说明见 [`hooks/README.md`](../hooks/README.md)。
 
 在 prompt 里写"不要读"永远只是约定，不是隔离。
 
