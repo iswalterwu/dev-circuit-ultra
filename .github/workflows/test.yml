@@ -41,6 +41,12 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet dist/*.whl
           "$RUNNER_TEMP/venv/bin/devcircuit" --version
           "$RUNNER_TEMP/venv/bin/devcircuit" rules
+      - name: Install from a git URL like the README does, and read the commit back
+        run: |
+          python -m venv "$RUNNER_TEMP/git-venv"
+          "$RUNNER_TEMP/git-venv/bin/python" -m pip install --quiet "git+file://$GITHUB_WORKSPACE"
+          expected="(git $(git rev-parse HEAD | cut -c1-7))"
+          "$RUNNER_TEMP/git-venv/bin/devcircuit" --version | tee /dev/stderr | grep -F "$expected"
       - name: Scaffold a project, a ledger and the skill dirs from the wheel
         run: |
           git config --global user.email "ci@example.com"

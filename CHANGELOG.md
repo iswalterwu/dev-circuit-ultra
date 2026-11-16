@@ -4,7 +4,7 @@
 
 ## 未发布
 
-照 0.7.0 的技能文字按场景走查时确认的 7 个问题：照文字做会被检查拦住、两处说法相反，或者在某种环境下不报错地漏掉。另有 1 个是试跑时发现的：停止点挡不住用户事先泛泛的授权。
+照 0.7.0 的技能文字按场景走查时确认的 7 个问题：照文字做会被检查拦住、两处说法相反，或者在某种环境下不报错地漏掉。另有 1 个是试跑时发现的：停止点挡不住用户事先泛泛的授权。另外，`devcircuit --version` 带上提交号，分得清装的是哪个构建。
 
 ### 流程
 
@@ -23,15 +23,17 @@
   - 文件名含中文等非 ASCII 字符的代码文件，`code-before-design` 不再看不见。
   - `code-before-design` 的提示加了一句：修 bug 不放在 `feat/` 分支上。
 - `devcircuit context`、`close`、`ledger check`：能力规格的文件名含非 ASCII 字符时，分支上新增、改写、删除的要求不再漏掉。
-- 账本在 git worktree 里可用：worktree 里没有 `guard.json` 时用主工作区的那份，记录记在同一个项目名下。此前 `ledger add` 报“没有配置账本”，`devcircuit close` 不写记录就收尾。
+- 账本在 git worktree 里可用：worktree 里没有 `guard.json` 时用主工作区的那份，记录记在同一个项目名下。此前 `ledger add` 报“没有配置账本”，`devcircuit close` 不写记录就收尾。hook 不跟着进 worktree：建在项目目录之外的 worktree 里，hook 找不到 `guard.json`，拦不住读账本；在那里开会话之前，照 README 常见问题“能在 git worktree 里用吗？”补上。
 - `devcircuit hooks install` 的输出提示在主干上提交它留下的文件。
 - `devcircuit init --adopt` 猜主干时，`fix/` 开头的当前分支和 `feat/` 一样不当主干。
+- `devcircuit --version` 在从 git 地址安装（`pipx install git+…`）时带上提交号，写成 `devcircuit <版本> (git <提交号前 7 位>)`。这种装法装的是分支当时的内容，同一个版本号下可能是不同的构建：提交号和仓库里 `v<版本>` 这个 tag 指向的提交一样，就是发版的构建，不一样就是之后的构建。从 wheel、sdist 或本地目录安装的不带提交号。
 
 ### 升级
 
-1. `devcircuit vendor` 更新项目里的两个检查器。
-2. `devcircuit sync` 同步新版技能。装过 hook 的项目，把 hook 脚本和 `.gitignore` 的改动在主干上提交。
-3. AGENTS.md 第 5 节的分支一行照新模板加上 `fix/<名>`。
+1. 先升级 CLI 本身：`pipx install --force git+https://github.com/iswalterwu/dev-circuit-ultra`。版本号没变时，再装一次不会换构建，所以带 `--force`；装完用 `devcircuit --version` 确认。后面两步拷的是已安装的 CLI 自带的检查器和技能。
+2. `devcircuit vendor` 更新项目里的两个检查器，并提交。
+3. `devcircuit sync` 同步新版技能。装过 hook 的项目，把 hook 脚本和 `.gitignore` 的改动在主干上提交。
+4. AGENTS.md 第 5 节的分支一行照新模板加上 `fix/<名>`。
 
 ## 0.7.0
 

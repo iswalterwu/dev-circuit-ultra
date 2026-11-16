@@ -48,6 +48,7 @@ bug 走快车道：从主干切出 `fix/<名>` 分支（不放 `feat/`，不写�
 ```bash
 # 1. 安装 CLI（流程要用它；Windows / macOS / Linux 相同）
 pipx install git+https://github.com/iswalterwu/dev-circuit-ultra   # 还没发布到 PyPI
+devcircuit --version                                               # 这样装的会带上提交号，看得出装的是哪个构建
 
 # 2. 同步技能到 Claude Code / agents / DeepSeek Harness 目录（DSH 用插件装技能的，同步只带 --target，见 docs/dsh.md）
 devcircuit sync
@@ -68,7 +69,7 @@ git -C ~/code/my-app commit -m "chore: 装账本边界 hook"
 
 然后在项目里用 `dev-circuit-ultra` skill：提一个需求，agent 先识别，再进框架设计或功能设计。
 
-升级旧项目先跑 `devcircuit migrate --check --project <项目>`。它列出要改的地方（旧卡的节、`design.md`、AGENTS.md 路由、检查器版本、账本配置），不改任何文件；先迁移进行中的功能，再同步新版技能。平时升级 `devcircuit` 之后，在项目根目录跑 `devcircuit vendor` 更新两个检查器并提交（提交前钩子和 CI 跑的是项目 `scripts/` 里的这两份），再 `devcircuit sync`（用 DSH 插件的只带 `--target`，见 [docs/dsh.md](docs/dsh.md)）；每个版本另外要做的事见 [CHANGELOG.md](CHANGELOG.md) 里那一版的"升级"小节。
+升级旧项目先跑 `devcircuit migrate --check --project <项目>`。它列出要改的地方（旧卡的节、`design.md`、AGENTS.md 路由、检查器版本、账本配置），不改任何文件；先迁移进行中的功能，再同步新版技能。平时升级 `devcircuit`（`pipx install --force git+https://github.com/iswalterwu/dev-circuit-ultra`，装完用 `devcircuit --version` 确认）之后，在项目根目录跑 `devcircuit vendor` 更新两个检查器并提交（提交前钩子和 CI 跑的是项目 `scripts/` 里的这两份），再 `devcircuit sync`（用 DSH 插件的只带 `--target`，见 [docs/dsh.md](docs/dsh.md)）；每个版本另外要做的事见 [CHANGELOG.md](CHANGELOG.md) 里那一版的"升级"小节。
 
 `sync.ps1`、`new-project.ps1`、`new-ledger.ps1` 仍然可用，它们只是转发到同样的实现。实现：Markdown skill + Python 3.10+（`devcircuit`、`doc_guard`、`spec_check`）+ git；PowerShell 7 只用于转发脚本；没有服务端组件。
 

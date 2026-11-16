@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ CONFIG_NAME = "guard.json"
 GUARD_IGNORE = f"{CONFIG_DIR}/{CONFIG_NAME}"
 SNIPPET_IGNORE = f"{CONFIG_DIR}/claude-settings.hook.json"
 IS_WINDOWS = os.name == "nt"
+COMMIT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")  # a full SHA-1 or SHA-256 object name, as pip records it
 HOOKS = {
     "pi": (("pi", "ledger-guard.js"), Path(".pi") / "extensions" / "ledger-guard.js"),
     "claude": (("claude", "ledger_guard.py"), Path(CONFIG_DIR) / "hooks" / "ledger_guard.py"),
@@ -33,6 +35,42 @@ HOOKS = {
 # inside, so bash, cmd and PowerShell all pass it through unchanged.
 HOOK_LAUNCHER = ("import os,runpy,sys; sys.argv=sys.argv[1:]; "
                  "os.path.isfile(sys.argv[0]) and runpy.run_path(sys.argv[0], run_name='__main__')")
+
+
+def installed_commit() -> str | None:
+    """The commit pip recorded when this copy was installed from a git URL (PEP 610), else None.
+
+    `pipx install git+…` installs whatever the branch holds, so two builds can carry one version.
+    The metadata has to belong to the code that is running: another install of devcircuit on the
+    path, or a dist-info an upgrade left behind in the same folder, must not lend its commit.
+    """
+    from importlib import metadata  # costs more to import than the lookup itself; only --version needs it
+
+    own = Path(__file__).with_name("__init__.py")
+    for distribution in metadata.distributions(name="devcircuit"):
+        try:
+            if distribution.version != __version__ or not os.path.samefile(
+                    distribution.locate_file("devcircuit/__init__.py"), own):
+                continue
+            recorded = json.loads(distribution.read_text("direct_url.json") or "null")["vcs_info"]
+            commit = recorded["commit_id"] if recorded["vcs"] == "git" else None
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+            continue
+        return commit if isinstance(commit, str) and COMMIT_ID.fullmatch(commit) else None
+    return None
+
+
+def version_line() -> str:
+    commit = installed_commit()
+    return f"devcircuit {__version__}" + (f" (git {commit[:7]})" if commit else "")
+
+
+class _Version(argparse.Action):
+    """`--version`, with the metadata import and lookup left until asked for: every command builds the parser."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(version_line())
+        parser.exit()
 
 
 def python_command() -> str:
@@ -397,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="devcircuit",
         description="dev-circuit-ultra guards: document hygiene, requirement IDs, ledger boundary.",
     )
-    parser.add_argument("--version", action="version", version=f"devcircuit {__version__}")
+    parser.add_argument("--version", action=_Version, nargs=0, help="显示版本；从 git 地址安装的另带提交号")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doc-guard", add_help=False,

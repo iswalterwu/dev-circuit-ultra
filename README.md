@@ -48,6 +48,7 @@ A blanket go-ahead given in advance ("you decide", "settle the details yourself"
 ```bash
 # 1. Install the CLI (the flow uses it; same on Windows / macOS / Linux)
 pipx install git+https://github.com/iswalterwu/dev-circuit-ultra   # not on PyPI yet
+devcircuit --version                                               # installed this way it also names the commit, so you can tell builds apart
 
 # 2. Sync the skills into Claude Code / agents / DeepSeek Harness (with the DSH plugin, sync with --target only; see docs/dsh.md)
 devcircuit sync
@@ -68,7 +69,7 @@ Do not skip step 5: while those files stay uncommitted, `devcircuit close` refus
 
 Then use the `dev-circuit-ultra` skill inside the project: bring a request, the agent classifies it, then goes to framework design or feature design.
 
-To upgrade an older project, run `devcircuit migrate --check --project <project>` first. It lists what to change (old card sections, `design.md`, AGENTS.md routing, checker versions, ledger setup) and changes nothing; migrate the features in progress before syncing the new skill. After any upgrade of `devcircuit`, run `devcircuit vendor` in the project root to refresh the two checkers and commit them (the pre-commit hook and CI run the copies in the project's `scripts/`), then `devcircuit sync` (with the DSH plugin, `--target` only; see [docs/dsh.md](docs/dsh.md)); whatever else a version needs is listed in its upgrade steps in [CHANGELOG.md](CHANGELOG.md).
+To upgrade an older project, run `devcircuit migrate --check --project <project>` first. It lists what to change (old card sections, `design.md`, AGENTS.md routing, checker versions, ledger setup) and changes nothing; migrate the features in progress before syncing the new skill. After any upgrade of `devcircuit` (`pipx install --force git+https://github.com/iswalterwu/dev-circuit-ultra`, then `devcircuit --version` to confirm), run `devcircuit vendor` in the project root to refresh the two checkers and commit them (the pre-commit hook and CI run the copies in the project's `scripts/`), then `devcircuit sync` (with the DSH plugin, `--target` only; see [docs/dsh.md](docs/dsh.md)); whatever else a version needs is listed in its upgrade steps in [CHANGELOG.md](CHANGELOG.md).
 
 `sync.ps1`, `new-project.ps1` and `new-ledger.ps1` still work; they forward to the same implementation. Implementation: a Markdown skill + Python 3.10+ (`devcircuit`, `doc_guard`, `spec_check`) + git; PowerShell 7 only for the forwarding scripts; no server component.
 

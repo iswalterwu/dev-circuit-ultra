@@ -24,6 +24,107 @@ def test_version(capsys) -> None:
     assert "devcircuit" in capsys.readouterr().out
 
 
+COMMIT = "61a639c34b08e5c9668ca5854a1a0b795f496b4b"
+CHECKOUT = str(Path(cli.__file__).resolve().parents[1])
+
+
+def _git_install(commit: str = COMMIT, vcs: str = "git") -> str:
+    """What pip writes into direct_url.json for `pip install git+…` (PEP 610)."""
+    return json.dumps({"url": "https://example.invalid/dev-circuit-ultra.git",
+                       "vcs_info": {"vcs": vcs, "requested_revision": "main", "commit_id": commit}})
+
+
+def _dist_info(site: Path, direct_url: str | None, version: str = cli.__version__) -> None:
+    """The metadata pip leaves beside an installed package; direct_url.json is what it adds for a URL install."""
+    info = site / f"devcircuit-{version}.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: devcircuit\nVersion: {version}\n",
+                                   encoding="utf-8")
+    if direct_url is not None:
+        (info / "direct_url.json").write_text(direct_url, encoding="utf-8")
+
+
+def _installed_copy(site: Path, direct_url: str | None) -> str:
+    """A copy of the package with pip's metadata beside it, the way site-packages holds an install."""
+    shutil.copytree(Path(cli.__file__).resolve().parent, site / "devcircuit",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    _dist_info(site, direct_url)
+    return str(site)
+
+
+def _version_line(python_path: str, cwd: Path) -> str:
+    result = subprocess.run([sys.executable, "-m", "devcircuit.cli", "--version"], capture_output=True,
+                            cwd=cwd, env={**os.environ, "PYTHONPATH": python_path})
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    return result.stdout.decode("utf-8").strip()
+
+
+@pytest.mark.parametrize("commit", [COMMIT, "a1b2c3d" + "0" * 57], ids=["sha1", "sha256"])
+def test_version_names_the_commit_of_a_git_install(tmp_path: Path, commit: str) -> None:
+    """`pipx install git+…` installs whatever main holds, so the version alone cannot tell two builds apart."""
+    site = _installed_copy(tmp_path / "site", _git_install(commit))
+
+    assert _version_line(site, tmp_path) == f"devcircuit {cli.__version__} (git {commit[:7]})"
+
+
+@pytest.mark.parametrize("direct_url", [
+    None,
+    json.dumps({"url": "file:///src/dev-circuit-ultra", "dir_info": {}}),
+    "{",
+    "[]",
+    "[" * 100_000,
+    json.dumps({"vcs_info": "git"}),
+    json.dumps({"vcs_info": {"vcs": "git", "commit_id": 61}}),
+    _git_install("main && echo"),
+    _git_install(COMMIT[:7]),
+    _git_install(COMMIT[:-1]),
+    _git_install(COMMIT + "0"),
+    _git_install(vcs="hg"),
+], ids=["wheel-or-index", "from-a-folder", "cut-short", "not-an-object", "nested-too-deep", "vcs-info-not-an-object",
+        "commit-not-text", "commit-not-a-hash", "short-hash", "one-digit-short", "one-digit-long", "not-git"])
+def test_version_is_plain_when_pip_recorded_no_commit(tmp_path: Path, direct_url: str | None) -> None:
+    """Only a git install has a commit, a full one; anything else, readable or not, prints the bare version and exits 0."""
+    site = _installed_copy(tmp_path / "site", direct_url)
+
+    assert _version_line(site, tmp_path) == f"devcircuit {cli.__version__}"
+
+
+def test_version_of_a_checkout_does_not_borrow_the_commit_of_an_install(tmp_path: Path) -> None:
+    """Run from a checkout while a git install of the same version is also on the path: its commit is not this code's."""
+    installed = _installed_copy(tmp_path / "site", _git_install())
+
+    assert _version_line(os.pathsep.join([CHECKOUT, installed]), tmp_path) == f"devcircuit {cli.__version__}"
+
+
+def test_version_ignores_metadata_whose_package_is_gone(tmp_path: Path) -> None:
+    """A dist-info with no package beside it (a half-removed install) describes nothing that is running."""
+    _dist_info(tmp_path / "other", _git_install())
+
+    assert _version_line(os.pathsep.join([str(tmp_path / "other"), CHECKOUT]), tmp_path) == f"devcircuit {cli.__version__}"
+
+
+def test_version_skips_metadata_left_behind_by_another_version(tmp_path: Path) -> None:
+    """`pip install --target --upgrade` leaves the old dist-info next to the new one; only the new one is this code's."""
+    site = _installed_copy(tmp_path / "site", _git_install())
+    _dist_info(Path(site), _git_install("b" * 40), version="0.0.1")
+    _dist_info(Path(site), _git_install("c" * 40), version="99.0.0")
+
+    assert _version_line(site, tmp_path) == f"devcircuit {cli.__version__} (git 61a639c)"
+
+
+def test_other_commands_do_not_load_the_metadata_machinery(tmp_path: Path) -> None:
+    """importlib.metadata costs more to import than the lookup itself; only `--version` pays for either."""
+    script = ("import sys; before = 'importlib.metadata' in sys.modules; from devcircuit import cli; "
+              "code = cli.main(['context', '--map', '--root', sys.argv[1]]); "
+              "print(); print(code, before, 'importlib.metadata' in sys.modules)")
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], capture_output=True, cwd=tmp_path,
+                            env={**os.environ, "PYTHONPATH": CHECKOUT})
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    code, before, after = result.stdout.decode("utf-8", errors="replace").split()[-3:]
+
+    assert (code, after) == ("0", before)
+
+
 def test_doc_guard_passthrough(tmp_path: Path, capsys) -> None:
     write(tmp_path, "docs/a.md", "见 D-036\n")
 
