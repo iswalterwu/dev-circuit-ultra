@@ -50,7 +50,7 @@ def test_migrate_is_quiet_for_a_current_project(tmp_path: Path, capsys) -> None:
     assert cli.main(["ledger", "init", "--path", str(ledger)]) == 0
     write(project, ".dev-circuit/guard.json", json.dumps({"ledger": str(ledger)}))  # gitignored by the template
     assert subprocess.run(["git", "-C", str(project), "status", "--porcelain"], capture_output=True,
-                          text=True, check=True).stdout.strip() == ""
+                          text=True, encoding="utf-8", check=True).stdout.strip() == ""
     capsys.readouterr()
 
     code = cli.main(["migrate", "--check", "--project", str(project)])

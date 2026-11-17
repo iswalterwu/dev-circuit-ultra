@@ -22,7 +22,9 @@ jobs:
       - name: Install pytest
         run: python -m pip install --upgrade pip pytest
       - name: Run tests
-        run: python -m pytest tests -q
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"
+        run: python -m pytest tests -q -rs
 
   package:
     runs-on: ubuntu-latest
