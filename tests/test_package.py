@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -67,6 +68,13 @@ def test_skill_frontmatter_is_store_compatible():
 
     assert _frontmatter("dev-circuit-ledger")["disable-model-invocation"] == "true"
     assert "disable-model-invocation" not in _frontmatter("dev-circuit-ultra")
+
+
+@pytest.mark.skipif(not os.environ.get("CI"), reason="only CI promises to have every optional tool")
+@pytest.mark.parametrize("tool", ["node", "pwsh", "sh"])
+def test_ci_has_the_tools_the_optional_tests_need(tool: str):
+    """The tests that need node, pwsh or sh skip without them; on CI a missing tool has to fail, not skip quietly."""
+    assert shutil.which(tool), f"{tool} is not on PATH, so the tests that need it were skipped"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is required for the DSH plugin smoke test")
