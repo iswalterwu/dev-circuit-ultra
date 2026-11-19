@@ -79,6 +79,22 @@ def _main_tree(project: Path) -> Path | None:
     return common.parent if git_dir != common else None
 
 
+HERE, MAIN_TREE, NOWHERE = "本工作树", "主工作树", "无"
+
+
+def locate(project: Path) -> tuple[Path | None, Path, str]:
+    """guard.json as the ledger commands find it: the file or None, the folder it is read from, and which one that is.
+
+    `hooks status` and `hooks install` ask here. They used to look in the project only, so in a linked
+    worktree they found no config where `ledger add` / `check` and `close` did.
+    """
+    home = _home(project)
+    guard = home / GUARD
+    if not guard.is_file():
+        return None, home, NOWHERE
+    return guard, home, HERE if home == project else MAIN_TREE
+
+
 def _guard(project: Path) -> dict:
     guard = _home(project) / GUARD
     if not guard.is_file():

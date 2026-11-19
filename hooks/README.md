@@ -24,7 +24,7 @@ devcircuit hooks install --harness pi --project D:\code\my-app --ledger D:\ledge
 # Claude Code：写 .dev-circuit/hooks/ledger_guard.py + 生成 settings 片段（合并进 .claude/settings.local.json 才生效）
 devcircuit hooks install --harness claude --project D:\code\my-app --ledger D:\ledgers\my-app
 
-# 看 guard.json 和 hook 文件在不在
+# 分层看状态：脚本、配置、登记；宿主是否加载要在会话里探（见下面"验证"）
 devcircuit hooks status --project D:\code\my-app
 ```
 
@@ -44,11 +44,13 @@ pi 只从会话启动目录下的 `.pi/extensions/` 自动加载扩展，而且�
 
 - `ledger` 和 `deny` 里的路径解析规则：绝对路径按原样；相对路径按**项目根**（`.dev-circuit` 的父目录）解析。
 - `project` 可选，是账本里 `entries/<project>/` 的目录名；不写就用项目目录名（git worktree 里用主工作区的目录名）。
-- `ledger_side` 可选，写 `"human"` 表示账本由 human 在账本一侧维护（强 / 最强档）：开发侧不写也不核对，`devcircuit close` 跳过账本步骤。human 在账本一侧跑 `devcircuit ledger add` / `check` 时，设 `DEVCIRCUIT_LEDGER` 指向账本（`DEVCIRCUIT_PROJECT` 可选，指定 `entries/` 下的项目名）：环境变量优先于 `guard.json`，不设的话，命令读到这份写着 `"human"` 的 `guard.json` 就会拒绝。
-- hook 的路径匹配**也覆盖 guard.json 本身**：配置文件里就有账本路径，它是最直接的泄漏点。`devcircuit ledger add` / `check` 的命令行里不带账本路径，所以放行；路径由 CLI 进程自己读。
+- `ledger_side` 可选，写 `"human"` 表示账本由 human 在账本一侧维护（强 / 最强档）：开发侧不写也不核对，`devcircuit close` 跳过账本步骤。human 在账本一侧跑 `devcircuit ledger add` / `check` 时，设 `DEVCIRCUIT_LEDGER` 指向账本（`DEVCIRCUIT_PROJECT` 可选，指定 `entries/` 下的项目名）：环境变量优先于 `guard.json`，不设的话，命令读到这份写着 `"human"` 的 `guard.json` 就会拒绝。开发侧这份只写 `ledger_side`、不写 `ledger` 时，`hooks install` 不要求 `--ledger`：换 hook 脚本带 `--force` 重跑即可，不用把账本位置写回来。
+- hook 的路径匹配**也覆盖 guard.json 本身**：配置文件里就有账本路径，它是最直接的泄漏点。`devcircuit ledger add` / `check` 的命令行里不带账本路径，所以放行；路径由 CLI 进程自己读。`hooks install` 和 `hooks status` 的输出也不带账本路径和 `deny` 里的路径：只说账本配没配、目录在不在（当前用户没有权限看的，写“目录看不到”）、额外拒绝几项，要看路径由 human 打开 `guard.json`。
 - `guard.json` 记录的是本机路径，`hooks install` 会自己把它写进 `.gitignore`（已被更宽的规则忽略就不写）。别让 agent 去改：hook 生效后，命令里出现这个路径就会被拦。hook 脚本和 `hooks install` 对 `.gitignore` 的改动都要在主干上提交：hook 脚本是边界的一部分，值得被 review；留着不提交，`devcircuit close` 会因为工作区不干净而拒绝收尾。
 - Claude Code 的片段只在 hook 脚本存在时才运行它：切到还没装 hook 的旧分支时放行，而不是拦下所有工具调用（python 打不开脚本时退出码是 2，Claude Code 会当成拦截）。Windows 上片段用 `python`，不用 WindowsApps 里的 `python3` 别名。
-- hook 从会话的当前目录往上找 `.dev-circuit/guard.json`，找不到就不拦任何调用；`devcircuit ledger add` / `check` 和 `close` 在 git worktree 里找不到时用主工作区的那份。所以 worktree 在项目目录之外时，CLI 照常写账本，hook 却拦不住读账本；在 worktree 里开会话之前要补什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。
+- hook 和 `devcircuit ledger add` / `check`、`close`、`hooks status` 用同一条规则找 `guard.json`：先看本目录，git worktree 里没有就用主工作区的那份；`ledger` 和 `deny` 里的相对路径按那份配置所在的目录（主工作区）解析。hook 还会从会话的当前目录继续往上找，都找不到就不拦任何调用；CLI 的 `--project` 要给项目目录，通常是工作树的顶层：给的是它里面的目录、而上层已经有配置时，`hooks status` 写出该给哪个目录，`hooks install` 以退出码 2 拒绝，不在里面另写一份 `guard.json`。升级前的旧 hook 脚本（没有版本行）没有“用主工作区那份”这一步：分支上还带着旧脚本的 worktree，只要不在主工作区目录里面，旧脚本就找不到配置、不拦任何调用。`hooks status` 这时以退出码 2 写出“这里不拦”一行，`hooks install` 留下旧脚本时也会提醒：把主干合并进那个分支，或在那个 worktree 里 `hooks install --force` 后提交。这个 worktree 的 settings 里登记的是别处的 Claude 脚本（比如主工作区那份）时，status 不拿 worktree 里这份旧脚本判“这里不拦”，“登记 claude”一行会写明命令指向的不是本工作树这份。
+- `hooks install` 在 git worktree 里不另写 `guard.json`，也不要求 `--ledger`：它沿用主工作区的那份，`--ledger` 与现有配置不同就拒绝，主工作区也没有配置时让 human 先到主工作区配置。worktree 里自带一份的（以前手抄的）继续优先，和主工作区那份不一样时 `hooks status` 会提醒，想跟主工作区一致就删掉它。子模块、`--separate-git-dir` 建的仓库、bare 仓库加 worktree 这三种布局没有这条回退，要在 worktree 里自带 `guard.json`：别的工作区已经有一份的，由 human 照那份抄，保留 `project` / `deny` / `ledger_side`，相对路径改成绝对路径；`hooks install` 在那里新写的一份只有账本位置，`hooks status` 和 `hooks install` 在这种 worktree 里会这样提示。在 worktree 里开会话之前要做什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。
+- `hooks install` 写 `guard.json` 是整份替换，内容没变就不重写；`--force` 覆盖项目里的 hook 脚本，但项目里的比本机 devcircuit 带的新时不覆盖，先升级本机的 devcircuit。
 
 hook 的判定不看工具名：它检查参数中的路径文本，命中当前规则能识别的账本或拒绝路径时就拦截。因此 `read`、`bash`、`write`、`grep` 以及新增工具都可以触发拦截，但不能保证识别每一种访问方式。
 
@@ -63,6 +65,11 @@ hook 的判定不看工具名：它检查参数中的路径文本，命中当前
 - 不按命令实际所在的目录解析相对路径：相对路径一律按项目根解析。会话的当前目录在项目的子目录里，或命令里先 `cd` 到别处时，从那里写的、走得到账本的相对路径可能拦不到。
 - 一个字符串只解析前 64 个 token：后面的内容只按字面比对，相对路径、`~` 开头的路径、带 `..` 的绝对路径、经软链的路径都拦不到。
 - 在 macOS 和 Linux 上不忽略大小写：macOS 默认的文件系统不区分大小写，换了大小写的账本路径照样读得到，hook 拦不到。
+- 这些写法拦不到：UNC 回环与管理共享（`\\localhost\D$\ledgers\…`、`\\127.0.0.1\D$\…`）、环境变量和不在开头的 `~`（`$HOME/ledgers/…`、`%USERPROFILE%\ledgers\…`、`X=~/ledgers/…`）、通配符（`../led*/…`）、对账本上级目录的递归命令（`grep -r … ..`）、指向账本文件的硬链接。
+- 卷 GUID 路径（`\\?\Volume{…}\ledgers\…`）不保证拦到：hook 不认这种写法，花括号后面那段被当成项目所在盘上的路径来比对，所以只有账本和项目在同一个盘时才碰巧拦得到。
+- `guard.json` 读不出账本位置时（不是合法的 JSON、不是 JSON 对象、`ledger` 不是非空字符串）不放行：hook 拦下全部工具调用，直到 human 修好这个文件，agent 自己修不了；`hooks status` 这时以退出码 2 写明无法解析。`deny` 写错只是那几项不拦，`hooks status` 会指出来。
+- 不管项目之外的安装：全局安装的 pi 扩展（`~/.pi/agent/extensions/`）和用户级登记的 Claude Code hook，`hooks status` 看不到，`hooks install --force` 也更新不到，要手工换成新脚本。
+- 不证明宿主已经加载了 hook：`hooks status` 只看得到文件和 settings，宿主是否已加载，CLI 证明不了，要照下面“验证”第 3 步做一次会话内探针。
 - 不替代 OS 权限：同一用户下，账号本身对账本目录仍然可读。
 - 不阻止"人"把账本内容贴进对话。
 
@@ -79,16 +86,25 @@ hook 的判定不看工具名：它检查参数中的路径文本，命中当前
 ## 验证
 
 ```powershell
-# 1. guard.json 和 hook 文件在不在（不检查 harness 有没有加载 hook）
+# 1. 分三层看，各一行（账本和 deny 的路径不打印）：
+#    脚本：pi / claude 的 hook 文件在不在，和本机 devcircuit 带的相比是相同、较旧还是较新
+#    配置：用的是本工作树还是主工作树的 guard.json、能不能解析、账本配没配、额外拒绝几项
+#    登记：本工作树的 .claude/settings.local.json 或 settings.json 里有没有运行 ledger_guard.py 的命令；pi 的脚本在不在 .pi/extensions/
 devcircuit hooks status --project D:\code\my-app
+# 退出码：0 正常；1 既没有配置也没有 hook 脚本；2 有 hook 脚本却找不到配置（包括 worktree 里的旧脚本找不到主工作树
+# 那份，这时多一行"这里不拦"），或配置无法解析。2 都由 human 处理。
+# Claude Code 没登记只提示，不改变退出码：用户级设置 CLI 看不到
 
 # 2. hook 脚本会拦（Claude Code 用的那一个可以单独跑）
 '{"cwd":"D:\\code\\my-app","tool_name":"Read","tool_input":{"file_path":"D:\\ledgers\\my-app\\entries\\x.md"}}' `
   | python D:\code\my-app\.dev-circuit\hooks\ledger_guard.py
 # 退出码 2 + stderr 说明 = 拦住了
 
-# 3. harness 真的在调用 hook：在项目根目录新开一个 pi 或 Claude Code 会话，让它读 D:\ledgers\my-app\entries\x.md（文件不用存在）
-# 应当被拦下并提示"账本边界"；Claude Code 没拦，先看 .claude/settings.local.json 里有没有合并 hooks 段；pi 没拦，先确认会话是在项目根目录启动的、项目是可信项目，再 /reload
+# 3. 宿主是否已加载，CLI 证明不了：照 status 最后一行做会话内探针。在项目根目录（git worktree 就在那个 worktree 的根目录）
+#    新开一个 pi 或 Claude Code 会话，让它读 status 给出的 <配置所在目录>\.dev-circuit\guard.json.selftest（一个不存在的文件）
+# 回"账本边界"说明已加载；回"文件不存在"说明没加载。探针一行后面带"先修好配置再探"或"换上新脚本再探"的，
+# 先照它说的做：那两种状态下旧脚本已加载也回"文件不存在"。Claude Code 没拦，先看 status 的"登记 claude"一行；
+# pi 没拦，先确认会话是在项目根目录启动的、项目是可信项目，再 /reload
 
 # 4. 最强级别：照 docker/README.md 的"验证边界"一节确认 dev 容器里没有 /ledger
 ```

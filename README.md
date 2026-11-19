@@ -56,7 +56,7 @@ devcircuit sync
 # 3. New project (an existing repo takes --adopt and only fills the gaps)
 devcircuit init --path ~/code/my-app --name "My App"
 
-# 4. Create the private ledger outside the project and seal the boundary at the tool-call layer (Claude Code: claude instead of pi)
+# 4. Create the private ledger outside the project and install the tool-call hook (it blocks recognized ledger paths, not filesystem isolation; Claude Code: claude instead of pi)
 devcircuit ledger init --path ~/ledgers/my-app
 devcircuit hooks install --harness pi --project ~/code/my-app --ledger ~/ledgers/my-app
 
@@ -85,7 +85,7 @@ To upgrade an older project, run `devcircuit migrate --check --project <project>
 | `devcircuit close <name> --summary <one line>` | full checks → ledger check → delete the card and commit → close record → delivery report skeleton; refuses while the working tree has uncommitted changes |
 | `devcircuit check` / `doc-guard` / `spec-check` / `rules` | the two checkers |
 | `devcircuit migrate --check` | before upgrading, list what an older project must change |
-| `devcircuit init` / `vendor` / `sync` / `hooks install` / `hooks status` / `ledger init` | create or adopt a project, refresh the checkers, sync the skills, install hooks, show hook status, create the ledger |
+| `devcircuit init` / `vendor` / `sync` / `hooks install` / `hooks status` / `ledger init` | create or adopt a project, refresh the checkers, sync the skills, install hooks, show hook status layer by layer (scripts, config, registration), create the ledger |
 
 ## Two checkers
 
@@ -176,13 +176,14 @@ The hook blocks ledger and `guard.json` access that its path-matching rules reco
 
 **Does it work in a git worktree?**
 
-Yes. `.dev-circuit/guard.json` is machine-local and not in git, so when a worktree has none, `devcircuit ledger add` / `check` and `close` use the main working tree's copy and file the records under the same project name. The hook is different: it looks for `guard.json` by walking up from the session's working directory, so in a worktree outside the project directory it finds none and cannot block ledger reads.
+Yes. `.dev-circuit/guard.json` is machine-local and not in git, so a worktree has none. The hooks and `devcircuit ledger add` / `check` and `close` find the config by the same rule: when the worktree has none, they use the main working tree's file and file the records under the same project name. The relative paths in `ledger` and `deny` still resolve against the main working tree, so the config is not copied into the worktree.
 
-For a setup that uses hooks, before opening an agent session in the worktree:
+Two things to do before opening an agent session in the worktree:
 
-1. Have a human prepare a copy of the main working tree's `guard.json`, preserving `project`, `deny` and `ledger_side`. In the copy, resolve relative paths in `ledger` and `deny` against the main working tree and replace them with absolute paths before saving it as `<worktree>/.dev-circuit/guard.json`. Otherwise a path such as `../notes` can point to a different directory in the worktree.
-2. Run `devcircuit hooks install --harness <pi|claude> --project <worktree> --ledger <absolute-ledger-path>` and follow its output. This updates `ledger`, not the paths in `deny`; without the prepared copy, the new config contains only the ledger path.
-3. Start the harness at the worktree root, ensure the hook is loaded, and run an interception self-check with a nonexistent file under the ledger and each `deny` directory. The hook must block the call; a file-not-found error alone does not prove it is active.
+1. Claude Code's registration is not in git, so no worktree has it: run `devcircuit hooks install --harness claude --project <worktree>` there (no `--ledger` needed; in a worktree it writes no `guard.json` of its own) and merge the hooks block it prints into that worktree's `.claude/settings.local.json`; or register the hook once in your user-level settings, with the command pointing at the main working tree's script. pi needs nothing here: the script arrives with git.
+2. Run `devcircuit hooks status --project <worktree>`, then do the in-session probe its last line gives: have the agent read the nonexistent file it names. An answer that says “账本边界” (the ledger boundary) shows the hook is blocking; a plain file-not-found shows it is not. A branch that still carries the hook script from before the upgrade does not look for the main working tree's config, so it blocks nothing in this worktree: status exits 2 with a line starting “这里不拦” (not blocking here). Merge the trunk into the worktree's branch first (or run `devcircuit hooks install --harness <pi|claude> --force` there and commit).
+
+A `guard.json` copied into a worktree by hand, as earlier instructions said, keeps taking precedence over the main working tree's, and `hooks status` says so when the two differ; delete it to follow the main working tree. Three layouts have no such fallback and need a `guard.json` of their own in the worktree: a submodule, a repository made with `--separate-git-dir`, and a bare repository with worktrees. When another working tree already has one, the human copies it over, keeping `project`, `deny` and `ledger_side` and turning relative paths into absolute paths; the one `hooks install` writes there holds the ledger path alone.
 
 A worktree inside the project directory (such as `.claude/worktrees/`) belongs in `.gitignore`, committed on the trunk (or in `.git/info/exclude` to ignore it on this machine only); otherwise the main working tree counts it as an untracked change and `close` run there refuses to close.
 

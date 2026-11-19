@@ -56,7 +56,7 @@ devcircuit sync
 # 3. 新建项目（已有仓库用 --adopt 只补缺失文件）
 devcircuit init --path ~/code/my-app --name "My App"
 
-# 4. 在项目外创建私有账本，并在工具调用层封住边界（Claude Code 把 pi 换成 claude）
+# 4. 在项目外创建私有账本，并装上工具调用层的拦截（拦认得出的账本路径，不是文件系统隔离；Claude Code 把 pi 换成 claude）
 devcircuit ledger init --path ~/ledgers/my-app
 devcircuit hooks install --harness pi --project ~/code/my-app --ledger ~/ledgers/my-app
 
@@ -85,7 +85,7 @@ git -C ~/code/my-app commit -m "chore: 装账本边界 hook"
 | `devcircuit close <名> --summary <一句话>` | 全量检查 → 账本核对 → 删卡并提交 → 收尾记录 → 交付报告骨架；工作区有没提交的改动就不收尾 |
 | `devcircuit check` / `doc-guard` / `spec-check` / `rules` | 两个检查器 |
 | `devcircuit migrate --check` | 升级前列出旧项目要改的地方 |
-| `devcircuit init` / `vendor` / `sync` / `hooks install` / `hooks status` / `ledger init` | 新建或接入项目、更新检查器、同步技能、装 hook、看 hook 状态、建账本 |
+| `devcircuit init` / `vendor` / `sync` / `hooks install` / `hooks status` / `ledger init` | 新建或接入项目、更新检查器、同步技能、装 hook、分层看 hook 状态（脚本、配置、登记）、建账本 |
 
 ## 两个检查器
 
@@ -176,13 +176,14 @@ hook 拦截路径匹配规则能识别出的账本和 `guard.json` 访问，减�
 
 **能在 git worktree 里用吗？**
 
-能。`.dev-circuit/guard.json` 是本机配置、不进 git，worktree 里没有它时，`devcircuit ledger add` / `check` 和 `close` 用主工作区的那份，记录记在同一个项目名下。hook 不一样：它从会话的当前目录往上找 `guard.json`，worktree 在项目目录之外时找不到，就拦不住读账本。
+能。`.dev-circuit/guard.json` 是本机配置、不进 git，worktree 里没有它。hook 和 `devcircuit ledger add` / `check`、`close` 用同一条规则找配置：worktree 里没有，就用主工作区的那份，记录记在同一个项目名下；`ledger` 和 `deny` 里的相对路径仍按主工作区解析，不用把配置拷进 worktree。
 
-使用 hook 的配置，在 worktree 里开 agent 会话之前：
+在 worktree 里开 agent 会话之前要做两件事：
 
-1. 由 human 准备主工作区 `guard.json` 的副本，保留 `project`、`deny`、`ledger_side`。在副本中把 `ledger` 和 `deny` 的相对路径按主工作区解析成绝对路径，再保存到 `<worktree>/.dev-circuit/guard.json`；否则 `../notes` 这类路径到了 worktree 可能指向另一个目录。
-2. 跑 `devcircuit hooks install --harness <pi|claude> --project <worktree> --ledger <账本绝对路径>`，并照它的输出做。它只更新 `ledger`，不转换 `deny` 里的路径；没准备副本时，新配置只有账本路径。
-3. 从 worktree 根目录启动 harness，确认 hook 已加载，再用账本和每个 `deny` 目录下的不存在文件做拦截自检。应由 hook 拦下调用，单纯的“文件不存在”报错不能证明 hook 生效。
+1. Claude Code 的登记不进 git，每个 worktree 都没有：在这个 worktree 里跑 `devcircuit hooks install --harness claude --project <worktree>`（不用给 `--ledger`，它在 worktree 里不另写 `guard.json`），把它给的 hooks 段合并进这个 worktree 的 `.claude/settings.local.json`；或者在用户级设置里登记一次，命令指向主工作区那份脚本。pi 不用做这一步，脚本随 git 进了 worktree。
+2. 跑 `devcircuit hooks status --project <worktree>`，再照它最后一行做一次会话内探针：让 agent 读它给出的那个不存在的文件，回“账本边界”才说明 hook 在拦，回“文件不存在”说明没有。分支上还带着升级前的旧脚本时，旧脚本不去找主工作区的配置，在这个 worktree 里不拦：status 以退出码 2 写出“这里不拦”一行，先把主干合并进这个 worktree 的分支（或在这里跑 `devcircuit hooks install --harness <pi|claude> --force` 并提交）。
+
+以前按旧说明手抄进 worktree 的 `guard.json` 会继续优先于主工作区那份，两份不一样时 `hooks status` 会提醒；想跟主工作区一致就删掉它。子模块、`--separate-git-dir` 建的仓库、bare 仓库加 worktree 这三种布局没有这条回退，要在 worktree 里自带 `guard.json`：别的工作区已经有一份的，由 human 照那份抄，保留 `project` / `deny` / `ledger_side`，相对路径改成绝对路径；`hooks install` 在那里新写的一份只有账本位置。
 
 worktree 建在项目目录里面（比如 `.claude/worktrees/`）时，把这个目录写进 `.gitignore` 并在主干上提交（只想在本机忽略就写进 `.git/info/exclude`），不然主工作区把它当成未跟踪的改动，在主工作区跑 `close` 会拒绝收尾。
 

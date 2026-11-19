@@ -64,7 +64,7 @@ devcircuit hooks status --project D:\code\my-app
 
 装完要在主干上提交的文件、Claude Code 还要合并的 `.claude/settings.local.json`，见 [README 快速开始](../README.zh-CN.md#快速开始)。
 
-hook 的路径匹配也覆盖 `guard.json` 本身，那里面就有账本路径。`devcircuit ledger add` / `check` 的命令行里不带账本路径，hook 放行；路径由 CLI 进程自己从 `guard.json` 读，相对路径按项目根解析。git worktree 里 CLI 和 hook 各自怎么找 `guard.json`、在 worktree 里开会话之前要补什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。
+hook 的路径匹配也覆盖 `guard.json` 本身，那里面就有账本路径。`devcircuit ledger add` / `check` 的命令行里不带账本路径，hook 放行；路径由 CLI 进程自己从 `guard.json` 读，相对路径按项目根解析。git worktree 里 CLI 和 hook 用同一条规则找 `guard.json`：worktree 里没有就用主工作区的那份，相对路径仍按主工作区解析；在 worktree 里开会话之前要做什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。`devcircuit hooks status` 分层报告脚本、配置和登记，不打印账本路径；宿主是否已加载要照它给的会话内探针在会话里试一次。
 
 hook 拦不住什么：开发进程仍以同一个 OS 用户运行，一条不用账本路径的命令（遍历文件系统）仍可能发现可读目录。要那种保证，用强 / 最强；那两档里开发侧碰不到账本，在开发侧的 `guard.json` 里写 `"ledger_side": "human"`：`ledger add` / `check` 在开发侧会说明账本在 human 一侧，`devcircuit close` 跳过账本步骤，并打印账本一侧要补的命令。
 

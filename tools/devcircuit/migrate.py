@@ -32,6 +32,9 @@ YAML_COMMENT = re.compile(r"(?:^|\s)#.*$")
 # A name, with * and ** at most: all the scan compares. One character class and no nesting, so a
 # pattern that does not fit is turned down in one pass however long it is.
 BRANCH_GLOB = re.compile(r"[\w./*-]+")
+# `VERSION = "0.2.0"` in the Python hook, `const VERSION = "0.2.0";` in the pi one, exported or not.
+HOOK_VERSION = re.compile(r'^(?:export\s+)?(?:const\s+)?VERSION\s*=\s*"(\d+(?:\.\d+)*)"', re.MULTILINE)
+SAME, OLDER, NEWER, DIFFERENT = "same", "older", "newer", "different"
 
 
 def _text(path: Path) -> str:
@@ -46,6 +49,33 @@ def checker_version(text: str) -> tuple[int, ...]:
     """
     match = CHECKER_VERSION.search(text)
     return tuple(int(part) for part in match.group(1).split(".")) if match else ()
+
+
+def _stated_version(text: str) -> tuple[int, ...] | None:
+    match = HOOK_VERSION.search(text)
+    return tuple(int(part) for part in match.group(1).split(".")) if match else None
+
+
+def hook_version(script: Path) -> tuple[int, ...] | None:
+    """The version a hook script states, or None for one from before the version line (0.2.0)."""
+    return _stated_version(_text(script))
+
+
+def hook_copy(installed: Path, shipped: Path) -> str:
+    """How a project's hook script stands against the one this devcircuit ships: SAME, OLDER, NEWER or DIFFERENT.
+
+    The scripts carry a version line from 0.2.0 on, so a copy without one is older than a shipped script
+    that has it. When the shipped one has none either, only the text can be compared, and a difference
+    then does not say which side is ahead. Without the direction, `hooks install --force` run by a
+    devcircuit that was not upgraded yet put its old script back over the newer one in the project.
+    """
+    theirs, ours = _text(installed), _text(shipped)
+    if theirs == ours:
+        return SAME
+    found, own = _stated_version(theirs), _stated_version(ours)
+    if own is None or found == own:
+        return DIFFERENT
+    return OLDER if found is None or found < own else NEWER
 
 
 def _cards(project: Path) -> list[str]:
@@ -296,7 +326,10 @@ def _tooling(project: Path) -> list[str]:
             actions.append(f"scripts/{name}.py 不是当前版本：devcircuit vendor --project <项目>")
     for relative, source in HOOK_FILES.items():
         installed = project / relative
-        if installed.is_file() and _text(installed) != _text(asset_path(*source)):
+        state = hook_copy(installed, asset_path(*source)) if installed.is_file() else SAME
+        if state == NEWER:
+            actions.append(f"{relative.as_posix()} 比本机 devcircuit 带的新：先升级本机 devcircuit，再跑这个检查")
+        elif state != SAME:
             actions.append(f"{relative.as_posix()} 不是当前版本："
                            f"devcircuit hooks install --harness {source[0]} --project <项目> --force")
     actions += _claude_settings(project)

@@ -60,25 +60,43 @@ def test_readmes_link_xerj_badge_and_pinned_corpus():
 
 def test_hook_docs_do_not_promise_unbypassable_isolation():
     claims = ("the agent cannot reach the ledger", "Not through tool calls:",
-              "agent 拿不到账本", "通过工具调用读不到", "agent 无法通过工具拿到账本")
+              "agent 拿不到账本", "通过工具调用读不到", "agent 无法通过工具拿到账本",
+              "封住边界", "seal the boundary")
     for name, caveat in (("README.md", "not an unbypassable security boundary"),
                          ("README.zh-CN.md", "不是不可绕过的安全边界"),
                          ("hooks/README.md", "不是不可绕过的安全边界"),
                          ("docs/ledger.md", "不是不可绕过的安全边界")):
         text = read(name)
         assert caveat in text, name
-        assert not any(claim in text for claim in claims), name
+        assert [claim for claim in claims if claim in text] == [], name
+    # What the hook and `hooks status` cannot do is written where the hook is described: an unreadable config
+    # blocks every call, some spellings of the ledger path get through, some installs are out of the CLI's
+    # sight, and whether the harness loaded the hook takes a probe in a session.
+    limits = read("hooks/README.md").split("### 它不做什么", 1)[1].split("\n## ", 1)[0]  # that section, not those after
+    assert [fact for fact in ("拦下全部工具调用", "UNC", "环境变量", "通配符", "递归", "硬链接",
+                              "`~/.pi/agent/extensions/`", "用户级", "更新不到", "CLI 证明不了", "会话内探针")
+            if fact not in limits] == []
+    # a volume GUID path is caught only by accident, when ledger and project share a drive: not listed as never caught
+    assert "卷 GUID 路径" in limits and "不保证拦到" in limits and "同一个盘" in limits
+    listed = next(line for line in limits.splitlines() if line.startswith("- 这些写法拦不到"))
+    assert "卷 GUID" not in listed
 
 
-def test_worktree_instructions_preserve_relative_path_targets():
+def test_worktree_answer_says_the_hooks_and_the_cli_share_one_config():
+    """The answer used to be three manual steps that copied guard.json into the worktree; the copies drifted."""
     for name, heading, terms in (
         ("README.md", "**Does it work in a git worktree?**",
-         ("relative paths", "absolute paths", "main working tree", "`deny`", "self-check")),
+         ("same rule", "main working tree", "relative paths", "`deny`", "`.claude/settings.local.json`", "user-level",
+          "`devcircuit hooks status", "in-session probe", "“这里不拦”", "delete it", "`--separate-git-dir`",
+          "`ledger_side`", "absolute paths")),
         ("README.zh-CN.md", "**能在 git worktree 里用吗？**",
-         ("相对路径", "绝对路径", "主工作区", "`deny`", "拦截自检")),
+         ("同一条规则", "主工作区", "相对路径", "`deny`", "`.claude/settings.local.json`", "用户级",
+          "`devcircuit hooks status", "会话内探针", "“这里不拦”", "删掉", "`--separate-git-dir`",
+          "`ledger_side`", "绝对路径")),
     ):
         section = read(name).split(heading, 1)[1].split("\n**", 1)[0]
-        assert all(term in section for term in terms), name
+        assert [term for term in terms if term not in section] == [], name
+        assert "--ledger <" not in section, name  # no longer told to run `hooks install --ledger …` in the worktree
 
 
 def test_readmes_name_the_steps_and_commands_the_skill_uses():
