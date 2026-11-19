@@ -2,6 +2,69 @@
 
 只记对使用者有影响的变化。版本号对应 git tag；`doc_guard` / `spec_check` 的脚本版本是各自独立的一条线，不跟包版本走。
 
+## 未发布
+
+修复版：一次下游使用评估和对照源码的核实确认了几类问题：账本边界在 git worktree 里不成立，`context` 会静默给出错的下一步或不完整的补读命令，`close` 提交之后账本出错就回不来并带出账本路径，几处检查全绿而状态不对。这一版只修这些，技能文字不变。
+
+### 退出码和行为有变的地方
+
+- 两个 hook：`guard.json` 读不出账本位置时（不是 UTF-8 的合法 JSON、不是对象、`ledger` 写了却不是非空字符串、文件打不开）拦下全部工具调用，要 human 修好文件。以前 Claude Code 的 hook 静默放行，pi 的告警后放行。
+- `hooks status`：配置读不出 0 → 2；有 hook 脚本却找不到配置 1 → 2；linked worktree 里主工作树有配置 1 → 0；worktree 分支上的旧脚本读不到主工作树的配置时 2（“这里不拦”）。
+- `hooks install`：linked worktree 里不带 `--ledger` 2 → 0（沿用主工作树的配置）；给了与现有配置不同的 `--ledger`、主工作树也没有配置、`--project` 给的是已配置项目里面的目录，都是 2，不再另写一份 `guard.json`。`guard.json` 里 `ledger` 不是非空字符串又不带 `--ledger` 时 0 → 2。
+- `close`：卡已不在、历史里有这个功能的 `close` 提交时 2 → 0 或 1（只补账本）；提交之后账本出错 2 → 1，并照常打印交付报告骨架。
+- `ledger add` / `ledger check`：写不进、读不出账本时，带账本路径的 traceback（1）→ 一行不带路径的错误（2）。
+- `migrate --check`：只有“CI 工作流不在主干上触发”这一种问题的项目 0 → 1。
+- `spec_check`：主工作区不再报项目目录里别的 git 工作区的问题，这类项目 1 → 0。
+
+### 账本边界
+
+- 两个 hook 在 linked worktree 里用主工作树的 `guard.json`，和账本命令用同一条规则：从会话目录逐级向上，每一级先看本级的配置，再看“本级是 linked worktree 顶层时主工作树的那一份”。以前建在项目目录之外的 worktree 里 hook 找不到配置，静默放行，而账本命令照常能写账本。`ledger` / `deny` 的相对路径按配置所在的工作树解析，工具调用里的相对路径按会话所在的工作树解析。子模块、`--separate-git-dir`、bare 加 worktree 没有回退，要在 worktree 里自带 `guard.json`。
+- 两个 hook 读 `guard.json` 的规则统一：去 BOM，`deny` 写错只跳过那几项，不再 traceback、不再误拦普通文件；只写 `ledger_side` 的配置是合法的。从会话目录到找到配置的那一级，沿途各级的 `guard.json` 位置也拦。
+- Windows 上认得 Git Bash / Cygwin / WSL 的 `/d/…`、`/cygdrive/d/…`、`/mnt/d/…` 写法和 `\\?\` 前缀；认得引号里的整段和转义的空格；pi 的 hook 经 junction 或软链访问时，叶子不存在、带通配符、链接目标还没建也拦。两个脚本带版本行（0.2.0）。
+- `hooks status` 分层报告：脚本（和本机 devcircuit 带的相比相同、旧、新）、配置（本工作树的还是主工作树的、能否解析）、登记（本工作树的 Claude settings 里有没有这条命令），外加“宿主是否已加载：CLI 证明不了”和一个会话内探针。`hooks status`、`hooks install` 和 hook 脚本的 `--status` 都不再打印账本路径和 `deny` 路径。
+- `hooks install` 在 linked worktree 里不再生成第二份只含账本位置的 `guard.json`（以前会丢掉主工作树配置里的 `ledger_side`、`deny`、`project`）。`guard.json` 整份替换写入，内容没变不重写；`--force` 不覆盖比本机带的新的 hook 脚本。
+- 项目路径里有 shell 会展开的字符（`$`、`%`、反引号、双引号）时，Claude Code 的 hook 命令不拦：`hooks install` 和 `hooks status` 现在会明说。命令本身没改，这种路径下请把项目挪到别处。
+- 账本命令遇到 `guard.json` 里 `ledger` 写了却不是路径时，说清楚两个 hook 会因此拦下全部调用，不再说“没有配置账本”。
+- 文档：README 的 worktree 常见问题不再教人把 `guard.json` 手抄进 worktree；hooks/README.md 写清匹配规则和拦不到的写法；不再有“封住边界”的说法。
+
+### context
+
+- `context --map`：写法走样的切片行（`- S3（下一个）：…`、`- （当前）S3：…`、`### S3：…` 等）和标题后写了不认的状态词的行，报出行号和原文，不再跳过后照常给出“下一个：S4”。结构写法放宽（列表符、任务框、加粗、小写 s）；状态仍只认 ✓、勾上的任务框和标题后的（当前）。卡里有“切片”标题时只读那一节的顶格行。
+- 截断提示列全被省略的编号，分成每行一条、可以原样运行的 `devcircuit context --ids …`；原调用带了 `--root` 或 `--base` 时，输出里照着运行的命令带上同样的参数。以前只列前 10 个、末尾接“…”，照着运行报“找不到”。
+- 卡的“能力：”一行认加粗、列表符和表格写法；读不到或对不上能力规格时明说。
+- `--map` 写明只列本工作树的 `specs/` 和当前分支；`--feature` / `--review` 开头写当前分支和基线，不在 `feat/<功能>` 上时说明。
+
+### close 与账本命令
+
+- `close` 可以重跑：提交之后账本没写成，修好后重跑同一条命令，它只补收尾记录或补账本仓库的提交。只凭功能名认最新的 `close <功能>` 提交，开头写明提交号和日期；同名功能以前收过尾时可能认到以前那次，要看日期。close 提交被 squash 掉之后仍要手工 `ledger add --kind close`。
+- 提交之后账本出错：照常打印交付报告骨架，“潜在问题”写明原因（不带路径）和重跑办法。
+- `doc_guard` 不过时也照跑 `spec_check`；human 一侧打印的补记命令带上 `--review`；收尾行写真实的当前分支；脏文件清单里的中文文件名不再是八进制转义。
+- 没有可比的基线、或当前就在基线上时，`close` 和 `ledger check` 明说哪几项没比。
+- `ledger check` 不再回显记录里形状不对的字段（写成“（格式不对，已略）”），字段类型不对的记录不再让它崩溃。
+
+### 检查器与脚手架
+
+- `spec_check` 0.7.2、`doc_guard` 0.4.2：项目目录里的嵌套 git 工作区（linked worktree、子模块、嵌套克隆）不再检查。只认 git 自己也认、而且本仓库没有跟踪的那种：手放一个假 `.git`，或往已跟踪的目录里放一个真的 `.git`，都照常查。遇到这种目录时检查器会跑一次 `git ls-files`。
+- `doc_guard` 0.4.2：`broken-link` 认百分号编码、尖括号和引号标题的链接写法；报错按 UTF-8 输出。
+- `init --adopt` 生成的 CI 工作流按 AGENTS.md 的主干触发，不再写死 main。`migrate --check` 列出 push / pull_request 不在主干上触发的工作流（读不懂的写法不报，写进 `.dcuignore` 的不查），检查器副本的提示分方向。
+- `vendor` 不把项目里更新的检查器覆盖成本机带的旧版本。
+- npm 包里缺模板的 `.gitignore`（npm 打包不收这个文件名），从 npm 包的布局跑 `devcircuit init` 会写到一半停下：模板改名为 `gitignore`，生成的文件名不变。
+
+### 测试
+
+- 全部测试在名字带中文和空格的目录下跑，不读本机的全局 git 配置，PATH 上已安装的 `devcircuit` 不参与；CI 里默认编码的读写当错误；CI 上缺 node、pwsh、sh、npm 就失败，不让依赖它们的测试悄悄跳过。
+- 新增 linked worktree、换行、GBK 控制台、四种 shell 下的回归测试，以及账本命令和两个 hook 在 20 种 git 布局下找到同一份配置的测试。
+
+### 升级
+
+1. 升级 CLI：`pipx install --force git+https://github.com/iswalterwu/dev-circuit-ultra`，装完用 `devcircuit --version` 确认。
+2. 在每个项目的主工作树跑 `devcircuit hooks status`。它报“无法解析”的，先由 human 把 `guard.json` 改成 UTF-8 的 JSON 对象，`ledger` 是非空的路径字符串（这里不放账本的，删掉这一项）：新的 hook 遇到读不出的配置会拦下全部工具调用。
+3. 在主工作树跑 `devcircuit vendor` 更新两个检查器，跑 `devcircuit hooks install --harness <pi|claude> --project <主工作树> --force` 换上新的 hook 脚本（不用再给 `--ledger`），都在主干上提交。装在全局的 pi 扩展要手工换。
+4. git worktree：各分支把主干合并进来后才用上新脚本，合并之前 `hooks status --project <worktree>` 会以 2 报“这里不拦”。以前按旧说明手抄进 worktree 的 `guard.json` 会继续优先，想跟主工作树一致就由 human 删掉。Claude Code 在每个 worktree 里把 `hooks install` 给的片段合并进 `.claude/settings.local.json`，或在用户级设置里登记一次。照 `hooks status` 最后一行做一次会话内探针。
+5. 跑 `devcircuit migrate --check`：列出 CI 工作流不在主干上触发的，把主干写进那一处的 `branches`；有意不在主干上跑的工作流写进 `.dcuignore`。
+6. 在研的功能跑一次 `devcircuit context --map`：报“切片行读不懂”的，照提示把那一行改成 `- S<n>：<标题>`，在做的加（当前），做完的加 ✓。
+7. 依赖输出或退出码的脚本，照上面“退出码和行为有变的地方”核对。技能文字没变，不用 `devcircuit sync`。
+
 ## 0.7.1
 
 照 0.7.0 的技能文字按场景走查时确认的 7 个问题：照文字做会被检查拦住、两处说法相反，或者在某种环境下不报错地漏掉。另有 1 个是试跑时发现的：停止点挡不住用户事先泛泛的授权。另外，`devcircuit --version` 带上提交号，分得清装的是哪个构建。
