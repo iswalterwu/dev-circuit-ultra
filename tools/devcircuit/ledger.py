@@ -128,14 +128,17 @@ def resolve(project: Path) -> tuple[Path, str]:
     home = _home(project)
     raw = _guard(project)
     environment = os.environ.get("DEVCIRCUIT_LEDGER")
+    # Both hooks read a `ledger` that is there but is not a path as a guard.json they cannot use, and block
+    # every tool call on it. "No ledger configured" here would send the human to set up one they already have.
+    if not environment and "ledger" in raw and not (isinstance(raw["ledger"], str) and raw["ledger"].strip()):
+        raise LedgerError(f"{GUARD.as_posix()} 里的 ledger 必须是非空的路径字符串：两个 hook 读不出这样的配置，"
+                          "会拦下全部工具调用。由 human 改成账本的路径；这里不放账本的，删掉这一项")
     if not environment and raw.get("ledger_side") == HUMAN_SIDE:
         raise LedgerError("这个项目的账本在 human 一侧（guard.json 的 ledger_side 是 human）：开发侧不写也不核对，"
                           "由 human 在账本一侧运行 devcircuit ledger add / check；devcircuit close 会跳过账本步骤")
     location = environment or raw.get("ledger")
     if not location:
         raise LedgerError(NOT_CONFIGURED)
-    if not isinstance(location, str):
-        raise LedgerError(f"{GUARD.as_posix()} 里的 ledger 必须是路径字符串")
     ledger = Path(os.path.expanduser(location))
     if not ledger.is_absolute():
         ledger = ledger.resolve() if environment else home.resolve() / ledger

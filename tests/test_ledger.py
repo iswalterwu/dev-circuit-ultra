@@ -534,6 +534,32 @@ def test_a_folder_inside_the_project_is_not_the_project(tmp_path: Path, capsys) 
     assert code == 2 and "没有配置账本" in out + err
 
 
+@pytest.mark.parametrize("value", [None, "", "   ", 5, ["ledgers"]],
+                         ids=["null", "empty", "blank", "a-number", "a-list"])
+def test_a_ledger_entry_the_hooks_cannot_read_is_not_called_no_ledger(tmp_path: Path, capsys, value) -> None:
+    """Both hooks block every tool call on such a guard.json; "no ledger configured" would send the human the wrong way."""
+    project, _ = setup(tmp_path)
+    write(project, ".dev-circuit/guard.json", json.dumps({"ledger": value}))
+
+    for command in (("check", "--project", str(project)),
+                    ("add", "--project", str(project), "--feature", "x", "--kind", "design", "--decision", "导出")):
+        code, out, err = ledger(capsys, *command)
+
+        assert code == 2, command
+        assert "ledger 必须是非空的路径字符串" in err and "拦下全部工具调用" in err, command
+        assert "没有配置账本" not in out + err and "Traceback" not in out + err, command
+
+
+def test_a_guard_file_without_a_ledger_entry_is_still_no_ledger(tmp_path: Path, capsys) -> None:
+    """Leaving the key out is how a project says it has no ledger here; only a key the hooks cannot read is an error."""
+    project, _ = setup(tmp_path)
+    write(project, ".dev-circuit/guard.json", json.dumps({"deny": ["../notes"]}))
+
+    code, out, err = ledger(capsys, "check", "--project", str(project))
+
+    assert code == 2 and "没有配置账本" in out + err
+
+
 def test_a_worktree_with_its_own_guard_file_still_files_under_the_project(tmp_path: Path, capsys) -> None:
     project, ledger_root = setup(tmp_path)
     tree = tmp_path / "wt-export"
