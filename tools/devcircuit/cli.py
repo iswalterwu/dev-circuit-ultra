@@ -311,8 +311,14 @@ def _vendor(args) -> int:
         if not destination.exists():
             destination.write_text(text, encoding="utf-8", newline="\n")
             print(f"新增：{destination}", file=out)
-        elif destination.read_text(encoding="utf-8-sig").replace("\r\n", "\n") == text:
+            continue
+        existing = destination.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+        if existing == text:
             print(f"未变：{destination}", file=out)
+        elif migrate_module.checker_version(existing) > migrate_module.checker_version(text):
+            # Vendored from a later devcircuit than the one installed here: the packaged copy
+            # written over it would quietly take the project's checks back a version.
+            print(f"项目里的更新，未覆盖：先升级本机 devcircuit（{destination}）", file=out)
         else:
             destination.write_text(text, encoding="utf-8", newline="\n")
             print(f"更新：{destination}", file=out)

@@ -367,6 +367,50 @@ def test_vendor_copies_and_refreshes_guards(tmp_path: Path, capsys) -> None:
     assert "outdated" not in guard.read_text(encoding="utf-8")
 
 
+def _declare_version(checker: Path, version: str) -> str:
+    """Give a vendored checker another VERSION, as a copy from an older or a later devcircuit has; returns its text."""
+    lines = checker.read_text(encoding="utf-8").splitlines(keepends=True)
+    [index] = [index for index, line in enumerate(lines) if line.startswith("VERSION = ")]
+    lines[index] = f'VERSION = "{version}"\n'
+    checker.write_text("".join(lines), encoding="utf-8", newline="\n")
+    return "".join(lines)
+
+
+def test_vendor_does_not_downgrade_a_newer_checker(tmp_path: Path, capsys) -> None:
+    """Vendored from a later devcircuit than this machine has: writing the packaged copy over it takes the checks back."""
+    project = tmp_path / "app"
+    project.mkdir()
+    assert cli.main(["vendor", "--project", str(project)]) == 0
+    checker = project / "scripts" / "spec_check.py"
+    newer = _declare_version(checker, "99.0.0")
+    capsys.readouterr()
+
+    assert cli.main(["vendor", "--project", str(project)]) == 0
+    out = capsys.readouterr().out
+    assert checker.read_text(encoding="utf-8") == newer
+    [line] = [line for line in out.splitlines() if str(checker) in line]
+    assert line.startswith("项目里的更新，未覆盖：先升级本机 devcircuit")
+    assert "未变" in out and "更新：" not in out  # doc_guard.py is the packaged one and stays
+
+
+@pytest.mark.parametrize("version", ["0.0.1", None], ids=["older", "same-version-edited"])
+def test_vendor_still_replaces_a_copy_that_is_not_newer(tmp_path: Path, capsys, version: str | None) -> None:
+    project = tmp_path / "app"
+    project.mkdir()
+    assert cli.main(["vendor", "--project", str(project)]) == 0
+    checker = project / "scripts" / "doc_guard.py"
+    packaged = checker.read_text(encoding="utf-8")
+    if version:
+        _declare_version(checker, version)
+    else:
+        checker.write_text(packaged + "\n# a local edit\n", encoding="utf-8", newline="\n")
+    capsys.readouterr()
+
+    assert cli.main(["vendor", "--project", str(project)]) == 0
+    assert "更新：" in capsys.readouterr().out
+    assert checker.read_text(encoding="utf-8") == packaged
+
+
 def test_vendor_is_stable_after_init(tmp_path: Path, capsys) -> None:
     project = tmp_path / "app"
 
@@ -377,6 +421,16 @@ def test_vendor_is_stable_after_init(tmp_path: Path, capsys) -> None:
     assert cli.main(["vendor", "--project", str(project)]) == 0
     out = capsys.readouterr().out
     assert "未变" in out and "更新" not in out
+
+
+def test_init_gives_the_project_a_gitignore_for_the_guard_config_and_caches(tmp_path: Path, capsys) -> None:
+    """The template is stored as `gitignore` (npm drops files named .gitignore); the project still gets the dot."""
+    project = tmp_path / "app"
+
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    lines = (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".dev-circuit/guard.json" in lines and "__pycache__/" in lines
+    assert not (project / "gitignore").exists()
 
 
 def test_init_then_adopt_keeps_existing_files(tmp_path: Path, capsys) -> None:
@@ -566,6 +620,78 @@ def test_adopt_reminds_an_existing_agents_file_about_the_trunk(tmp_path: Path, c
 
     assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
     assert "主干" in capsys.readouterr().out
+
+
+WORKFLOW = ".github/workflows/doc-guard.yml"
+WORKFLOW_KEPT_MAIN = "CI 工作流的触发分支按 main 写的，主干定了以后改 .github/workflows/doc-guard.yml"
+
+
+def _workflow_branches(root: Path) -> list[str]:
+    """The `branches:` lines of the scaffolded CI workflow."""
+    return [line.strip() for line in (root / WORKFLOW).read_text(encoding="utf-8").splitlines()
+            if line.strip().startswith("branches:")]
+
+
+@pytest.mark.parametrize("trunk", ["workbench", "team/release-2.x"])
+def test_adopt_points_the_ci_workflow_at_the_repos_trunk(tmp_path: Path, capsys, trunk: str) -> None:
+    """The workflow template says main; in a repo adopted on workbench the checks never ran on the trunk."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", trunk, str(repo)], check=True)
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    assert _workflow_branches(repo) == [f'branches: [ "{trunk}" ]'] * 2
+    assert "CI 工作流" not in capsys.readouterr().out
+
+
+def test_adopt_takes_the_workflow_trunk_from_an_existing_agents_file(tmp_path: Path, capsys) -> None:
+    """AGENTS.md is where the trunk is written down; the branch the repo is on is only a guess."""
+    repo = tmp_path / "repo"
+    write(repo, "AGENTS.md", "# 已有入口\n\n- 主干：`release/2.x`\n")
+    _git(repo, "init", "-q", "-b", "develop")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    assert _workflow_branches(repo) == ['branches: [ "release/2.x" ]'] * 2
+    assert "CI 工作流" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("branch, agents", [
+    ("feat/first", None),
+    ("develop", "# 已有入口\n"),
+    ("develop", "# 已有入口\n\n- 主干：\n"),
+    ("develop", '# 已有入口\n\n- 主干：`we"ird`\n'),
+    ("主线", None),
+], ids=["no-safe-guess", "agents-names-no-trunk", "trunk-line-without-a-branch", "quote-in-the-name",
+        "name-outside-plain-ascii"])
+def test_adopt_keeps_main_in_the_workflow_and_says_so_when_it_cannot_tell(
+        tmp_path: Path, capsys, branch: str, agents: str | None) -> None:
+    """No trunk to read, or a name that cannot go into the quoted YAML string as it is: main stays, and adopt says so."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if agents is not None:
+        write(repo, "AGENTS.md", agents)
+    _git(repo, "init", "-q", "-b", branch)
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    assert _workflow_branches(repo) == ['branches: [ "main" ]'] * 2
+    assert WORKFLOW_KEPT_MAIN in capsys.readouterr().out
+
+
+def test_adopt_leaves_an_existing_ci_workflow_alone(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    write(repo, WORKFLOW, "name: Existing CI\n")
+    _git(repo, "init", "-q", "-b", "feat/first")
+
+    assert cli.main(["init", "--path", str(repo), "--adopt"]) == 0
+    assert (repo / WORKFLOW).read_text(encoding="utf-8") == "name: Existing CI\n"
+    assert "CI 工作流" not in capsys.readouterr().out  # nothing was written, so there is nothing to say about it
+
+
+def test_init_writes_main_into_the_workflow_of_a_new_project(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "app"
+
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    assert _workflow_branches(project) == ['branches: [ "main" ]'] * 2
+    assert "CI 工作流" not in capsys.readouterr().out
 
 
 def test_errors_about_unencodable_paths_do_not_crash(tmp_path: Path) -> None:

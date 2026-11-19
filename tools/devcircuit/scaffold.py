@@ -15,11 +15,15 @@ from . import context
 from ._loader import load_script, skill_root
 
 HOOK_FILE = ".githooks/pre-commit"
+WORKFLOW_FILE = ".github/workflows/doc-guard.yml"
 TEMPLATE_TRUNK = re.compile(r"^- 主干：.*\n", re.MULTILINE)
+WORKFLOW_BRANCHES = '[ "main" ]'  # how the workflow template writes its two trigger branches
+PLAIN_BRANCH = re.compile(r"[A-Za-z0-9._/-]+")  # goes into the workflow's quoted YAML string as it is
 HOOK_RULE = ".githooks/** text eol=lf"
 AUTO_RULE = "* text=auto eol=lf"
 
 # destination -> (source relative to the skill folder, needs project name and trunk substitution)
+# AGENTS.md stays first: the workflow takes its trigger branch from the trunk AGENTS.md names.
 PROJECT_FILES = {
     "AGENTS.md": ("templates/AGENTS.md", True),
     "CLAUDE.md": ("templates/project/CLAUDE.md", False),
@@ -29,9 +33,10 @@ PROJECT_FILES = {
     "scripts/doc_guard.py": ("scripts/doc_guard.py", False),
     "scripts/spec_check.py": ("scripts/spec_check.py", False),
     ".githooks/pre-commit": ("templates/project/.githooks/pre-commit", False),
-    ".github/workflows/doc-guard.yml": (
-        "templates/project/.github/workflows/doc-guard.yml", False),
-    ".gitignore": ("templates/project/.gitignore", False),
+    WORKFLOW_FILE: ("templates/project/.github/workflows/doc-guard.yml", False),
+    # Stored without the dot: npm leaves every file named .gitignore out of a package, and `init`
+    # run from the npm layout then stopped at "模板缺失" with the project half written.
+    ".gitignore": ("templates/project/gitignore", False),
     ".dcuignore": ("templates/project/.dcuignore", False),
 }
 
@@ -148,6 +153,20 @@ def _trunk_note(root: Path, trunk: tuple[str, str] | None, written: bool) -> str
     return "AGENTS.md 已存在、没有主干一行：主干不是 main / master 时，在第 5 节加一行 `- 主干：`<分支>``。"
 
 
+def _workflow_trunk(root: Path) -> str | None:
+    """The trunk AGENTS.md names, when the CI workflow can take it as its trigger branch.
+
+    AGENTS.md is where the trunk is written down, so the workflow follows it and not the guess adopt
+    made from the branches. No trunk line, one without a branch, or a name that would need YAML
+    escaping: None, and the workflow keeps the template's main.
+    """
+    try:
+        trunk = context.named_trunk(root)
+    except context.ContextError:
+        return None
+    return trunk if trunk and PLAIN_BRANCH.fullmatch(trunk) else None
+
+
 def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     """Create a dev-circuit-ultra project skeleton, or fill the gaps in a repo."""
     root = _prepare_target(path, adopt)
@@ -155,6 +174,7 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     trunk = _adopted_trunk(root) if adopt else ("main", "新项目")
     created: list[str] = []
     skipped: list[str] = []
+    workflow_trunk = None
 
     for relative, (source, substitute) in PROJECT_FILES.items():
         content = read_template(source)
@@ -162,6 +182,8 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
             content = content.replace("<项目名>", project_name)
             content = (content.replace("主干：`main`", f"主干：`{trunk[0]}`") if trunk
                        else TEMPLATE_TRUNK.sub("", content))
+        if relative == WORKFLOW_FILE and (workflow_trunk := _workflow_trunk(root)):
+            content = content.replace(WORKFLOW_BRANCHES, f'[ "{workflow_trunk}" ]')
         _write_missing(root, relative, content, created, skipped)
     _ensure_gitattributes(root, adopt, created, skipped)
     make_executable(root / HOOK_FILE)
@@ -197,6 +219,8 @@ def init_project(path: Path, name: str | None, adopt: bool = False) -> int:
     print(f"spec_check 退出码：{spec_exit}", file=out)
     if adopt and (note := _trunk_note(root, trunk, "AGENTS.md" in created)):
         print(note, file=out)
+    if WORKFLOW_FILE in created and not workflow_trunk:
+        print(f"CI 工作流的触发分支按 main 写的，主干定了以后改 {WORKFLOW_FILE}。", file=out)
     if adopt:
         print("下一步：填写 AGENTS.md 里的项目事实；按上面 doc_guard 报出的问题清理旧文档；"
               "然后 git add -A，运行 git update-index --chmod=+x .githooks/pre-commit，再提交。",

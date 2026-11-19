@@ -22,10 +22,30 @@ HOOK_FILES = {
 OLD_DESIGN_ROUTE = re.compile(r"(?<![\w./\\-])design\.md|\bspecs[/\\][^\s`'\"|)]*design\.md")
 TABLE_RULE = re.compile(r"^\|\s*:?-{3,}", re.MULTILINE)
 SECTION = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+CHECKER_VERSION = re.compile(r"""^VERSION\s*=\s*["'](\d+(?:\.\d+)*)""", re.MULTILINE)
+# What the workflow scan reads of YAML: block keys, `- item` lines, one-line lists, trailing comments.
+CI_EVENTS = ("push", "pull_request")
+ON_KEY = re.compile(r"""^(?:on|"on"|'on')\s*:(?:\s|$)""")
+YAML_KEY = re.compile(r"""^(?P<indent> *)(?P<key>[A-Za-z_"'][\w"'-]*)\s*:(?:\s+(?P<rest>.*))?$""")
+YAML_ITEM = re.compile(r"^(?P<indent> *)-\s+(?P<value>.+)$")
+YAML_COMMENT = re.compile(r"(?:^|\s)#.*$")
+# A name, with * and ** at most: all the scan compares. One character class and no nesting, so a
+# pattern that does not fit is turned down in one pass however long it is.
+BRANCH_GLOB = re.compile(r"[\w./*-]+")
 
 
 def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n")
+
+
+def checker_version(text: str) -> tuple[int, ...]:
+    """The VERSION a checker script declares, as numbers to compare; () when it declares none.
+
+    () sorts below every version: a copy whose version cannot be read counts as older, so it is
+    refreshed the way it always was. Only a copy that says it is newer is left alone.
+    """
+    match = CHECKER_VERSION.search(text)
+    return tuple(int(part) for part in match.group(1).split(".")) if match else ()
 
 
 def _cards(project: Path) -> list[str]:
@@ -98,6 +118,137 @@ def _trunk(project: Path) -> list[str]:
     return []
 
 
+class _Unread(Exception):
+    """The workflow's `on:` block uses YAML the scan does not read; it lists nothing rather than guess."""
+
+
+def _yaml_line(raw: str) -> str:
+    """A workflow line without its comment: from a `#` that starts the line or follows a space.
+
+    Quotes are not looked at: an apostrophe in a comment is far more common than a ` #` inside a quoted
+    string. Where there is one, the string is cut short; no branch name has a space in it, and an entry
+    left with half its quotes is no pattern, so that file ends up unread.
+    """
+    return YAML_COMMENT.sub("", raw).rstrip()
+
+
+def _pattern(value: str) -> str:
+    """One entry of a `branches:` filter without its quotes: a branch name, or a glob of * and **."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    elif value.startswith("*"):  # unquoted, that is a YAML alias and not a glob
+        raise _Unread
+    if not BRANCH_GLOB.fullmatch(value):  # nothing at all, `!` negation, ?, +, [] and the rest of YAML
+        raise _Unread
+    return value
+
+
+def _branch_filters(text: str) -> list[tuple[str, int, list[str]]]:
+    """(event, line of its `branches:`, patterns) for the push and pull_request filters of a workflow.
+
+    A text scan of the top-level `on:` block, not a YAML parser: the CLI has no dependencies. Only
+    `branches:` is read. An event without it runs on every branch and is left out, and so is whatever
+    is written on one line (`on: push`, `push: {…}`) or filtered with branches-ignore. Raises _Unread
+    where the block cannot be followed: a line that is neither a key nor a list item, a list that runs
+    over several lines, an alias, a pattern with more in it than * and **.
+    """
+    lines = [_yaml_line(raw) for raw in text.split("\n")]
+    start = next((index for index, line in enumerate(lines) if ON_KEY.match(line)), None)
+    if start is None:
+        return []
+    block = []
+    for number, line in enumerate(lines[start + 1:], start + 2):
+        if not line.strip():
+            continue
+        if not line.startswith(" "):
+            break  # the next top-level key
+        block.append((number, line))
+    found: list[tuple[str, int, list[str]]] = []
+    event, event_indent, position = None, None, 0
+    while position < len(block):
+        number, line = block[position]
+        position += 1
+        key = YAML_KEY.match(line)
+        if not key:
+            if YAML_ITEM.match(line):
+                continue  # `- push` under on:, or the items of a key that is not read
+            raise _Unread
+        indent, name, rest = len(key["indent"]), key["key"].strip("\"'"), (key["rest"] or "").strip()
+        if event_indent is None or indent <= event_indent:
+            event, event_indent = name, indent
+        elif event in CI_EVENTS and name == "branches":
+            if one_line_list := re.fullmatch(r"\[(.*)\]", rest):
+                values = [part for part in one_line_list[1].split(",") if part.strip()]
+            elif rest:  # a single name; a list left open for the next lines is no pattern and ends up unread
+                values = [rest]
+            else:
+                values = []
+                while (position < len(block) and (item := YAML_ITEM.match(block[position][1]))
+                       and len(item["indent"]) >= indent):
+                    values.append(item["value"])
+                    position += 1
+            if not values:
+                raise _Unread
+            found.append((event, number, [_pattern(value) for value in values]))
+    return found
+
+
+def _matches(pattern: str, name: str) -> bool:
+    """Whether a `branches:` pattern takes a branch name: * stops at a slash, ** does not.
+
+    Not a regex made from the pattern: that backtracks, and a few dozen stars in front of a letter
+    stalled the command. This follows how far into the name the pattern can have got, so the work is
+    bounded by the two lengths whatever the filter says.
+    """
+    reached = {0}
+    for part in re.findall(r"\*+|[^*]+", pattern):
+        if part.startswith("*"):  # one star stays inside a segment; two take anything, and more say no more than two
+            reached = {end for start in reached for end in range(start, len(name) + 1)
+                       if len(part) > 1 or "/" not in name[start:end]}
+        else:
+            reached = {start + len(part) for start in reached if name.startswith(part, start)}
+    return len(name) in reached
+
+
+def _runs_on(patterns: list[str], trunk: str) -> bool:
+    """A `branches:` filter lets the trunk through when one of its patterns matches it, by name or by glob."""
+    return any(_matches(pattern, trunk) for pattern in patterns)
+
+
+def _workflows(project: Path) -> list[str]:
+    """CI workflows whose push or pull_request filter leaves the trunk out: the checks never run on it.
+
+    The trunk is the one AGENTS.md names, else the remote's default branch. With neither there is nothing
+    reliable to hold a workflow against, and a local branch name is not taken for one. A workflow that
+    is meant for another branch goes into .dcuignore.
+    """
+    folder = project / ".github" / "workflows"
+    if not folder.is_dir():
+        return []
+    named = context.named_trunk(project)
+    trunk = named or context.remote_trunk(project)
+    if not trunk:
+        return []
+    stated = "AGENTS.md 的主干" if named else "远端默认分支"
+    guard = load_script("spec_check")
+    ignore_file = project / guard.IGNORE_FILE
+    ignored = guard.load_ignore_file(ignore_file) if ignore_file.is_file() else []
+    actions = []
+    for path in sorted(folder.iterdir()):
+        relative = path.relative_to(project).as_posix()
+        if path.suffix not in (".yml", ".yaml") or not path.is_file() or guard.path_is_ignored(relative, ignored):
+            continue
+        try:
+            filters = _branch_filters(_text(path))
+        except _Unread:
+            continue
+        actions += [f"{relative}:{line}：{event} 只在 {'、'.join(patterns)} 上触发，{stated}是 {trunk}："
+                    f"把 {trunk} 写进这里的 branches；有意不在主干上跑的工作流，把这个文件写进 .dcuignore"
+                    for event, line, patterns in filters if not _runs_on(patterns, trunk)]
+    return actions
+
+
 def _hook_commands(settings) -> list[str]:
     """PreToolUse command strings, skipping anything not shaped like Claude Code settings."""
     hooks = settings.get("hooks") if isinstance(settings, dict) else None
@@ -136,7 +287,12 @@ def _tooling(project: Path) -> list[str]:
     actions = []
     for name in ("doc_guard", "spec_check"):
         vendored = project / "scripts" / f"{name}.py"
-        if vendored.is_file() and _text(vendored) != _text(script_path(name)):
+        if not vendored.is_file():
+            continue
+        copy, packaged = _text(vendored), _text(script_path(name))
+        if checker_version(copy) > checker_version(packaged):  # vendor would refuse; it is the tool that is behind
+            actions.append(f"scripts/{name}.py 比本机 devcircuit 带的新：先升级本机 devcircuit，不要跑 vendor")
+        elif copy != packaged:
             actions.append(f"scripts/{name}.py 不是当前版本：devcircuit vendor --project <项目>")
     for relative, source in HOOK_FILES.items():
         installed = project / relative
@@ -153,7 +309,10 @@ def _tooling(project: Path) -> list[str]:
 
 
 def check(project: Path) -> list[str]:
-    actions = [*_cards(project), *_sizes(project), *_agents(project), *_trunk(project)]
+    trunk_first = _trunk(project)
+    actions = [*_cards(project), *_sizes(project), *_agents(project), *trunk_first]
+    if not trunk_first:  # a broken trunk line or an undecided base is settled first; the workflows wait for it
+        actions += _workflows(project)
     if (project / ".dev-circuit" / "reviewer.json").is_file():
         actions.append(".dev-circuit/reviewer.json：可以删掉；审核改为每个功能一次，模型写在 AGENTS.md 的“审核模型”")
     architecture = project / "docs" / "architecture.md"
@@ -164,8 +323,10 @@ def check(project: Path) -> list[str]:
         if path.is_file() and TABLE_RULE.search(_text(path)):
             actions.append(f"{relative} 还有手写的登记表：可以删掉，devcircuit context --map 现场生成")
     actions += _tooling(project)
-    status = subprocess.run(["git", "-C", str(project), "status", "--porcelain", "--untracked-files=all",
-                             "--", "specs"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # core.quotepath=false: by default git prints a non-ASCII path quoted and octal-escaped.
+    status = subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(project), "status", "--porcelain",
+                             "--untracked-files=all", "--", "specs"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     dirty = [line[3:] for line in status.stdout.splitlines() if line.strip()] if status.returncode == 0 else []
     if dirty:
         listed = "、".join(dirty[:3]) + ("…" if len(dirty) > 3 else "")

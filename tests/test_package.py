@@ -7,9 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from devcircuit import scaffold
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_NAMES = ("dev-circuit-ultra", "dev-circuit-ledger")
+NPM = shutil.which("npm")
 
 
 def _frontmatter(skill_name: str) -> dict[str, str]:
@@ -55,6 +58,25 @@ def test_pi_and_dsh_package_manifest():
     assert "skills" in manifest["files"]
 
 
+@pytest.mark.skipif(NPM is None, reason="npm is required to list what the npm package would hold")
+def test_npm_package_holds_every_template_the_scaffold_reads(tmp_path: Path):
+    """npm never packs a file named .gitignore; a template it leaves out stops `devcircuit init` half-way."""
+    listing = subprocess.run(
+        [NPM, "pack", "--dry-run", "--json"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "npm_config_cache": str(tmp_path / "npm-cache"), "npm_config_update_notifier": "false"})
+    assert listing.returncode == 0, listing.stderr
+    packed = {entry["path"] for entry in json.loads(listing.stdout)[0]["files"]}
+
+    skill = "skills/dev-circuit-ultra"
+    scaffolded = {f"{skill}/{source}" for source, _ in scaffold.PROJECT_FILES.values()}
+    # The rest of templates/ as well: `ledger init` copies its folder as it is, and the skill text sends
+    # agents to the others. Any name npm drops (.gitignore, .npmrc, …) shows up here before it ships.
+    templates = {path.relative_to(ROOT).as_posix() for path in (ROOT / skill / "templates").rglob("*") if path.is_file()}
+    assert f"{skill}/templates/ledger/schema.md" in templates  # the walk is looking at the right folder
+    assert sorted((scaffolded | templates) - packed) == []
+
+
 def test_the_archivist_is_retired():
     assert not (ROOT / "skills" / "dev-circuit-archivist").exists()
 
@@ -71,9 +93,9 @@ def test_skill_frontmatter_is_store_compatible():
 
 
 @pytest.mark.skipif(not os.environ.get("CI"), reason="only CI promises to have every optional tool")
-@pytest.mark.parametrize("tool", ["node", "pwsh", "sh"])
+@pytest.mark.parametrize("tool", ["node", "npm", "pwsh", "sh"])
 def test_ci_has_the_tools_the_optional_tests_need(tool: str):
-    """The tests that need node, pwsh or sh skip without them; on CI a missing tool has to fail, not skip quietly."""
+    """The tests that need node, npm, pwsh or sh skip without them; on CI a missing tool has to fail, not skip quietly."""
     assert shutil.which(tool), f"{tool} is not on PATH, so the tests that need it were skipped"
 
 

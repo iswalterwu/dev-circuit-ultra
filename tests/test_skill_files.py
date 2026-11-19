@@ -136,7 +136,7 @@ def test_agents_template_routes_through_context():
 
 
 def test_scaffold_ignores_caches_and_does_not_hand_register_docs():
-    assert "__pycache__/" in read("templates/project/.gitignore")
+    assert "__pycache__/" in read("templates/project/gitignore")
     docs_map = read("templates/project/docs/README.md")
     requirements_map = read("templates/project/docs/requirements/README.md")
     assert "](architecture.md)" not in docs_map
