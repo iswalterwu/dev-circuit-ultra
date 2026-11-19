@@ -289,3 +289,28 @@ def test_the_pi_hook_guards_through_the_same_guard_file(layouts: Layouts, name: 
     # A relative path in a call starts at the folder that answered, wherever below it the session sits; the
     # Python hook's session root is compared in the two tests above.
     assert relative == ([True] if row.hooks else [])
+
+
+@pytest.mark.parametrize("name", ["main-top", "wt-outside", "wt-inside"])
+def test_the_probe_hooks_status_gives_is_one_both_hooks_block(layouts: Layouts, name: str, tmp_path: Path) -> None:
+    """`hooks status` tells the human to have the agent read <config root>/.dev-circuit/guard.json.selftest: a hook
+    that is loaded has to answer it with 账本边界. That contract spans the CLI and both scripts, so it is pinned here."""
+    import contextlib
+    import io
+    import re
+    import devcircuit.cli as cli
+
+    row = row_of(layouts, name)
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        cli.main(["hooks", "status", "--project", str(row.start)])
+    probe = re.search(r"让 agent 读 (.+?)（一个不存在的文件）", printed.getvalue()).group(1)
+    assert same(probe, row.hooks.parent / "guard.json.selftest")
+
+    from test_ledger_hook import run_hook
+    blocked = run_hook({"cwd": str(row.start), "tool_name": "Read", "tool_input": {"file_path": probe}})
+    assert blocked.returncode == 2 and "账本边界" in blocked.stderr.decode("utf-8")
+    if NODE is not None:
+        [session] = run_sessions(tmp_path, [(row.start, [["read", {"path": probe}]])])
+        [verdict] = session["results"]
+        assert verdict and verdict.get("block") and "账本边界" in verdict.get("reason", "")
