@@ -1,4 +1,4 @@
-"""doc_guard v0.4.1
+"""doc_guard v0.4.2
 
 用途：只禁止，不要求；检查文档中的历史过程记录、禁止路径、断链，以及 agent 整份读入的文件有没有超出体积上限。
 用法：python doc_guard.py [--root DIR] [--json] [--ignore GLOB]... [--ignore-rule RULE]...
@@ -15,6 +15,10 @@
                           和浅层 README）
 
 代码围栏内的内容不做检查：示例命令和哈希不是文档主张。
+嵌套的 git 工作区（linked worktree、子模块、嵌套克隆）不查：里面的文档属于那个工作区，在那里运行时照常检查。
+只认本机上 git 也认的 .git：它指向本机读不到的路径（如宿主和容器各建的 worktree）时认不出，照常查。
+本仓库跟踪着文件的目录照常查，里面放了 git 认的 .git 也一样：遇到带这种 .git 的目录时问一次 git 跟踪了哪些文件；
+问不到时（没装 git、不在 git 仓库里、git 报错）只看 .git 本身。
 """
 
 import argparse
@@ -22,12 +26,14 @@ import fnmatch
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from urllib.parse import unquote
 
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -81,10 +87,17 @@ ARCHITECTURE = "docs/architecture.md"
 DECISION_ID = re.compile(r"\b(?:D-\d{3}|ADR-\d+)\b")
 LONG_HASH = re.compile(r"\b[0-9a-f]{32,64}\b")
 SHORT_HASH = re.compile(r"(?<![#\w-])[0-9a-f]{7,12}(?![\w-])")
-INLINE_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
+# The target runs to the first ")"; inside angle brackets a ")" is part of the file name.
+INLINE_LINK = re.compile(r"\[[^\]\n]*\]\((\s*<[^<>\n]*>[^)\n]*|[^)\n]+)\)")
+LINK_TITLE = re.compile(r"""\s+["'].*$""")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 SUMMARY_ANCHOR = re.compile(r"<a\s+id=[\"']summary[\"']")
 HEADING = re.compile(r"^(#{1,6})\s")
+# What git accepts in HEAD: a ref under refs/, or the commit a detached HEAD sits on. Between "ref:" and
+# "refs/" it takes blanks, tabs and line breaks (read as text, so each is a LF here), which is fewer
+# characters than \s matches.
+GIT_HEAD = re.compile(r"ref:[ \t\n]*refs/|[0-9a-fA-F]{40}")
+GIT_POINTER = "gitdir: "  # how a .git file starts, the one blank included; the rest of the file is the path
 
 # What --list-rules prints, built from the constants above so it cannot drift from them.
 RULE_HELP = {
@@ -95,14 +108,15 @@ RULE_HELP = {
     "decision-id": "文档里出现决策编号：D- 加三位数字或 ADR- 加数字，如 D-036、ADR-12",
     "long-hash": "文档里出现 32–64 位小写十六进制串",
     "short-hash": "文档里出现 7–12 位、同时含数字和字母的小写十六进制串（像提交号）",
-    "broken-link": "Markdown 链接的相对路径指向不存在的文件（不查 http(s)、mailto、# 锚点和绝对路径）",
+    "broken-link": "Markdown 链接的相对路径指向不存在的文件（不查 http(s)、mailto、# 锚点和绝对路径；"
+                   "认尖括号、引号标题和百分号编码的写法）",
     "oversize": f"能力规格（docs/requirements/ 下除 README.md 外的 .md）超过 {SPEC_MAX_LINES} 行，"
                 f"或卡（specs/<功能>/spec.md）超过 {CARD_MAX_LINES} 行",
     "arch-summary": f"{ARCHITECTURE} 没有用 <a id=\"summary\"></a> 标出的框架摘要，"
                     f"或摘要超过 {SUMMARY_MAX_LINES} 个非空行（到下一个同级标题为止）",
 }
 SCOPE = ("范围：根目录和 docs/、specs/、design/ 下的 .md，第二、三层目录里的 README.md，以及 --include 指定的 .md；"
-         "代码围栏里的内容和 doc-guard:ignore / off 标出的行不查。")
+         "嵌套的 git 工作区（linked worktree、子模块、嵌套克隆）、代码围栏里的内容和 doc-guard:ignore / off 标出的行不查。")
 
 SUPPRESS_LINE = re.compile(r"doc-guard:\s*ignore", re.IGNORECASE)
 SUPPRESS_OFF = re.compile(r"doc-guard:\s*off", re.IGNORECASE)
@@ -169,6 +183,84 @@ def load_ignore_file(path: Path) -> list[str]:
     return patterns
 
 
+def _git_text(path: Path) -> str:
+    """A file of git's the way git reads it: all of it, less the line endings at its end. Nothing else is trimmed.
+
+    It is read as text, so a CR LF or a lone CR arrives as LF; git treats the three alike where these files have
+    them, at the end and after "ref:". Bytes that are not UTF-8 stay what they are: a branch or a folder may be
+    named in another encoding.
+    """
+    return path.read_text(encoding="utf-8", errors="surrogateescape").rstrip("\n")
+
+
+def _is_git_dir(folder: Path) -> bool:
+    """What git itself asks of a git directory: a HEAD naming a branch or a commit, and objects/ and refs/.
+
+    A linked worktree's own directory has no objects/; its `commondir` file names the repository that does.
+    """
+    if not GIT_HEAD.match(_git_text(folder / "HEAD")):
+        return False
+    shared = folder / "commondir"
+    common = folder / _git_text(shared) if shared.is_file() else folder
+    return (common / "objects").is_dir() and (common / "refs").is_dir()
+
+
+def _is_git_worktree(directory: Path) -> bool:
+    """True when `directory` has a `.git` that git would take for a repository, as the top of a working tree has.
+
+    That is a git directory, or a file that holds `gitdir: <folder>` naming one: a linked worktree, a submodule,
+    a nested clone. git goes on tracking a folder that merely contains something named `.git`, so a made-up one
+    must not hide the folder. Only files are read here; no git process is started.
+    """
+    marker = directory / ".git"
+    try:
+        if marker.is_dir():
+            return _is_git_dir(marker)
+        if not marker.is_file():
+            return False
+        pointer = _git_text(marker)
+        if not pointer.startswith(GIT_POINTER) or pointer == GIT_POINTER:
+            return False
+        # A relative path is relative to the folder the file is in; joining an absolute one leaves it as it is.
+        return _is_git_dir(directory / pointer[len(GIT_POINTER):])
+    except (OSError, ValueError):
+        # Unreadable, missing a part, or naming a path no file can have (a NUL in it): no reason to stop,
+        # the folder is checked like any other.
+        return False
+
+
+class _OtherCheckouts:
+    """Tells which folders under `root` are another git checkout, for the walk to leave out.
+
+    Their files belong to that checkout, whatever branch it is on, not to the tree being checked. A `.git` that
+    git accepts does not settle it: put into a folder the repository of `root` already tracks, it changes nothing
+    for git. The files go on being tracked and committed, and `.git` shows in no status and no commit. Only the
+    index tells such a folder from another checkout, so git is asked what it tracks: once, and only when a folder
+    with such a `.git` turns up. Where git cannot answer (not installed, `root` in no repository) nothing is
+    tracked, and the `.git` decides alone.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.tracked: list[str] | None = None
+
+    def has(self, directory: Path) -> bool:
+        if not _is_git_worktree(directory):
+            return False
+        if self.tracked is None:
+            try:
+                listed = subprocess.run(["git", "-C", str(self.root), "ls-files", "-z"], capture_output=True,
+                                        text=True, encoding="utf-8", errors="surrogateescape").stdout
+            except OSError:
+                listed = ""
+            # Compared without case: Windows and macOS let a folder be spelled in another case than the index
+            # has it. Where case matters, that can only add to what is checked.
+            self.tracked = listed.casefold().split("\0")
+        # A submodule is listed as the folder itself, so only paths below it are files of this repository.
+        below = directory.relative_to(self.root).as_posix().casefold() + "/"
+        return not any(path.startswith(below) for path in self.tracked)
+
+
 def _is_forbidden_dir(relative: Path) -> bool:
     parts = relative.parts
     return relative.as_posix() in FORBIDDEN_DIRS or (
@@ -196,8 +288,8 @@ def _is_scanned_doc(relative: Path, includes=()) -> bool:
     ) or (relative.name == "README.md" and len(parts) in {2, 3})
 
 
-def _walk(root: Path, directory: Path, findings: list[Finding], patterns,
-          includes=()) -> list[Path]:
+def _walk(root: Path, directory: Path, findings: list[Finding], patterns, includes,
+          others: _OtherCheckouts) -> list[Path]:
     documents: list[Path] = []
     for path in sorted(directory.iterdir()):
         relative = path.relative_to(root)
@@ -209,7 +301,9 @@ def _walk(root: Path, directory: Path, findings: list[Finding], patterns,
             if _is_forbidden_dir(relative):
                 findings.append(Finding("forbidden-path", relative.as_posix(), 0, "禁止的目录"))
                 continue
-            documents.extend(_walk(root, path, findings, patterns, includes))
+            if others.has(path):  # after the forbidden paths: a repository put there is still reported
+                continue
+            documents.extend(_walk(root, path, findings, patterns, includes, others))
         elif path.is_file():
             if path_is_ignored(relative.as_posix(), patterns):
                 continue
@@ -225,16 +319,37 @@ def _is_absolute_target(target: str) -> bool:
             or PureWindowsPath(target).is_absolute())
 
 
+def _link_destination(target: str) -> str:
+    """The target the way Markdown reads it: without the angle brackets and without the quoted title."""
+    target = target.strip()
+    if target.startswith("<") and ">" in target:
+        return target[1:target.index(">")]
+    return LINK_TITLE.sub("", target)
+
+
+def _link_resolves(target: str, folder: Path) -> bool:
+    """True for a target this rule does not check, and for a file that exists, as written or percent-decoded."""
+    if (target.startswith("#") or target.lower().startswith(("http:", "https:", "mailto:"))
+            or _is_absolute_target(target)):
+        return True
+    location = re.split(r"[?#]", target, maxsplit=1)[0]
+    if not location or (folder / location).exists():
+        return True
+    # Decoding must not widen where this looks. Joined to the folder, a decoded absolute path, drive or
+    # \\host\share replaces it: the answer would depend on the machine, and Windows would ask that host.
+    decoded = unquote(location)
+    return (not _is_absolute_target(decoded) and not PureWindowsPath(decoded).drive
+            and (folder / decoded).exists())
+
+
 def _scan_links(line: str, document: Path, root: Path, number: int) -> list[Finding]:
     findings: list[Finding] = []
     relative = document.relative_to(root).as_posix()
     for match in INLINE_LINK.finditer(line):
         target = match.group(1)
-        if (target.startswith("#") or target.lower().startswith(("http:", "https:", "mailto:"))
-                or _is_absolute_target(target)):
-            continue
-        location = re.split(r"[?#]", target, maxsplit=1)[0]
-        if location and not (document.parent / location).exists():
+        # As written comes first, so a target that resolved before Markdown's reading was added still does.
+        if not any(_link_resolves(candidate, document.parent)
+                   for candidate in (target, _link_destination(target))):
             findings.append(Finding("broken-link", relative, number, f"链接目标不存在：{target}"))
     return findings
 
@@ -344,7 +459,7 @@ def _scan(root: Path, ignores, ignored_rules, ignore_file, use_ignore_file: bool
             patterns.extend(load_ignore_file(candidate))
 
     findings: list[Finding] = []
-    documents = _walk(root, root, findings, patterns, includes)
+    documents = _walk(root, root, findings, patterns, includes, _OtherCheckouts(root))
     for document in documents:
         findings.extend(_scan_document(document, root))
         findings.extend(_scan_shape(document, root))
@@ -358,6 +473,7 @@ def _scan(root: Path, ignores, ignored_rules, ignore_file, use_ignore_file: bool
 
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Check project documentation for forbidden content")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: current directory)")
     parser.add_argument("--json", action="store_true", help="print findings as JSON")

@@ -1,4 +1,4 @@
-"""spec_check v0.7.1
+"""spec_check v0.7.2
 
 用途：只检查能力规格里的要求编号是否完整一致、代码和测试引用的编号是否存在，不要求写满任何字段；
 在 feat/<功能> 分支上，卡提交之前不许改代码（提交草稿的那次提交除外；卡提交之前，草稿删掉的编号还被引用也放行）。
@@ -9,6 +9,10 @@
 --report 先给出要求总数和有测试、靠演示、都没有的各几条，再列出未被测试引用和标为演示的要求，不影响退出码。
 旧编号（AC-xxx-y）也算在内：测试里写成 <代号>:AC-xxx-y 才算引用。
 测试引用按 test/tests/__tests__ 目录或常见测试文件名识别；普通源码不算证明。
+嵌套的 git 工作区（linked worktree、子模块、嵌套克隆）不查：里面的文件属于那个工作区，在那里运行时照常检查。
+只认本机上 git 也认的 .git：它指向本机读不到的路径（如宿主和容器各建的 worktree）时认不出，照常查。
+本仓库跟踪着文件的目录照常查，里面放了 git 认的 .git 也一样：遇到带这种 .git 的目录时问一次 git 跟踪了哪些文件；
+问不到时（没装 git、不在 git 仓库里、git 报错）只看 .git 本身。
 --json --report 将报告写到标准错误，标准输出保持 JSON 数组。
 本文件来自 dev-circuit-ultra 仓库，项目里不要修改，升级时整体覆盖。
 
@@ -30,7 +34,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 
-VERSION = "0.7.1"
+VERSION = "0.7.2"
 IGNORE_FILE = ".dcuignore"
 
 RULES = (
@@ -62,6 +66,11 @@ DEFINITION = re.compile(BULLET + r"(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*[�
 TABLE_DEFINITION = re.compile(r"^\|\s*(?:\*\*)?(" + IDENTIFIER + r")(?:\*\*)?\s*\|")
 DEMONSTRATION = re.compile(r"^\s+- (?:证明[：:].*演示|demonstrated by[：:])")
 FEATURE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# What git accepts in HEAD: a ref under refs/, or the commit a detached HEAD sits on. Between "ref:" and
+# "refs/" it takes blanks, tabs and line breaks (read as text, so each is a LF here), which is fewer
+# characters than \s matches.
+GIT_HEAD = re.compile(r"ref:[ \t\n]*refs/|[0-9a-fA-F]{40}")
+GIT_POINTER = "gitdir: "  # how a .git file starts, the one blank included; the rest of the file is the path
 
 # What --list-rules prints; the scope is built from the constants above so it cannot drift from them.
 RULE_HELP = {
@@ -76,7 +85,8 @@ RULE_HELP = {
 }
 SCOPE = ("范围：docs/requirements/ 下除 README.md 外的 .md；引用在这些后缀的文件里找："
          + " ".join(sorted(CODE_EXTENSIONS))
-         + "。--report 只把测试文件里的引用算作有测试：test/、tests/、__tests__/ 下的文件，"
+         + "，嵌套的 git 工作区（linked worktree、子模块、嵌套克隆）不查。"
+           "--report 只把测试文件里的引用算作有测试：test/、tests/、__tests__/ 下的文件，"
            "或文件名形如 test_*、*_test、*.test.*、*.spec.*、*Test、*Tests、*Spec。")
 
 
@@ -146,6 +156,84 @@ def _ignores(root: Path, ignores, ignore_file, use_ignore_file: bool) -> list[st
     return patterns
 
 
+def _git_text(path: Path) -> str:
+    """A file of git's the way git reads it: all of it, less the line endings at its end. Nothing else is trimmed.
+
+    It is read as text, so a CR LF or a lone CR arrives as LF; git treats the three alike where these files have
+    them, at the end and after "ref:". Bytes that are not UTF-8 stay what they are: a branch or a folder may be
+    named in another encoding.
+    """
+    return path.read_text(encoding="utf-8", errors="surrogateescape").rstrip("\n")
+
+
+def _is_git_dir(folder: Path) -> bool:
+    """What git itself asks of a git directory: a HEAD naming a branch or a commit, and objects/ and refs/.
+
+    A linked worktree's own directory has no objects/; its `commondir` file names the repository that does.
+    """
+    if not GIT_HEAD.match(_git_text(folder / "HEAD")):
+        return False
+    shared = folder / "commondir"
+    common = folder / _git_text(shared) if shared.is_file() else folder
+    return (common / "objects").is_dir() and (common / "refs").is_dir()
+
+
+def _is_git_worktree(directory: Path) -> bool:
+    """True when `directory` has a `.git` that git would take for a repository, as the top of a working tree has.
+
+    That is a git directory, or a file that holds `gitdir: <folder>` naming one: a linked worktree, a submodule,
+    a nested clone. git goes on tracking a folder that merely contains something named `.git`, so a made-up one
+    must not hide the folder. Only files are read here; no git process is started.
+    """
+    marker = directory / ".git"
+    try:
+        if marker.is_dir():
+            return _is_git_dir(marker)
+        if not marker.is_file():
+            return False
+        pointer = _git_text(marker)
+        if not pointer.startswith(GIT_POINTER) or pointer == GIT_POINTER:
+            return False
+        # A relative path is relative to the folder the file is in; joining an absolute one leaves it as it is.
+        return _is_git_dir(directory / pointer[len(GIT_POINTER):])
+    except (OSError, ValueError):
+        # Unreadable, missing a part, or naming a path no file can have (a NUL in it): no reason to stop,
+        # the folder is checked like any other.
+        return False
+
+
+class _OtherCheckouts:
+    """Tells which folders under `root` are another git checkout, for the walk to leave out.
+
+    Their files belong to that checkout, whatever branch it is on, not to the tree being checked. A `.git` that
+    git accepts does not settle it: put into a folder the repository of `root` already tracks, it changes nothing
+    for git. The files go on being tracked and committed, and `.git` shows in no status and no commit. Only the
+    index tells such a folder from another checkout, so git is asked what it tracks: once, and only when a folder
+    with such a `.git` turns up. Where git cannot answer (not installed, `root` in no repository) nothing is
+    tracked, and the `.git` decides alone.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.tracked: list[str] | None = None
+
+    def has(self, directory: Path) -> bool:
+        if not _is_git_worktree(directory):
+            return False
+        if self.tracked is None:
+            try:
+                listed = subprocess.run(["git", "-C", str(self.root), "ls-files", "-z"], capture_output=True,
+                                        text=True, encoding="utf-8", errors="surrogateescape").stdout
+            except OSError:
+                listed = ""
+            # Compared without case: Windows and macOS let a folder be spelled in another case than the index
+            # has it. Where case matters, that can only add to what is checked.
+            self.tracked = listed.casefold().split("\0")
+        # A submodule is listed as the folder itself, so only paths below it are files of this repository.
+        below = directory.relative_to(self.root).as_posix().casefold() + "/"
+        return not any(path.startswith(below) for path in self.tracked)
+
+
 def _capability_files(root: Path, patterns=()):
     for path in sorted((root / "docs" / "requirements").glob("*.md")):
         if path.name != "README.md" and not path_is_ignored(path.relative_to(root).as_posix(), patterns):
@@ -213,11 +301,13 @@ def _references(root: Path, codes, patterns=()):
         r"\b(?:" + alternation + r")-\d+\b"                # DEMO-1
         + r"|\b(?:" + alternation + r"):AC-\d{3}-\d+\b"      # legacy <CODE>:AC-xxx-y
     )
+    others = _OtherCheckouts(root)
     for directory, dirs, files in os.walk(root):
         base = Path(directory)
         dirs[:] = sorted(
             name for name in dirs
             if name not in SKIPPED_DIRS
+            and not others.has(base / name)
             and not path_is_ignored((base / name).relative_to(root).as_posix(), patterns)
         )
         for name in sorted(files):

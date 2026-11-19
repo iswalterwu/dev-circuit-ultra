@@ -1,5 +1,6 @@
 """Behavior checks for requirement IDs, in-flight changes and code references."""
 
+import contextlib
 import json
 import os
 import subprocess
@@ -114,6 +115,301 @@ def test_skipped_dirs(tmp_path):
     assert scan(tmp_path) == []
 
 
+@pytest.mark.parametrize("where", [".trees/wt", ".claude/worktrees/x"])
+def test_a_linked_worktree_inside_the_project_is_checked_on_its_own(tmp_path, where, capsys):
+    # A worktree kept inside the project folder holds another branch. Its code and tests were read as the main
+    # tree's: that branch's references came out as dangling here, and its tests counted as coverage here.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    tree = tmp_path / where
+    _git(tmp_path, "worktree", "add", "-q", "-b", "export", str(tree))
+    write(tree, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n- DEMO-2：two\n")
+    write(tree, "tests/test_export.py", "# DEMO-1 DEMO-2\n")
+    write(tree, "src/export.py", "# DEMO-9\n")
+
+    assert scan(tmp_path) == []
+    assert report(tmp_path) == ["未被测试引用：DEMO-1"]
+    assert main(["--root", str(tmp_path), "--report"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "spec_check：通过（1 份能力规格，1 条要求）",
+        "1 条要求：0 条有测试引用，0 条靠演示，1 条既没有测试也没有演示",
+        "未被测试引用：DEMO-1"]
+
+    # With the worktree as the root, its own files are checked like any project's.
+    assert [(f.rule, f.path, f.message) for f in scan(tree)] == [
+        ("dangling-ref", "src/export.py", "引用的编号不存在：DEMO-9")]
+    assert report(tree) == []
+
+
+def test_a_nested_repository_is_checked_on_its_own(tmp_path):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    nested = tmp_path / "vendor" / "tool"
+    write(nested, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(nested, "tests/test_tool.py", "# DEMO-1 DEMO-9\n")
+    _git(nested, "init", "-q", "-b", "main")
+
+    assert scan(tmp_path) == []
+    assert report(tmp_path) == ["未被测试引用：DEMO-1"]
+    assert [(f.rule, f.path) for f in scan(nested)] == [("dangling-ref", "tests/test_tool.py")]
+
+    # The same on a detached HEAD, where HEAD holds a commit instead of naming a branch.
+    _git(nested, "add", "-A")
+    _git(nested, "commit", "-q", "-m", "init")
+    _git(nested, "checkout", "-q", "--detach")
+    assert not (nested / ".git" / "HEAD").read_text(encoding="utf-8").startswith("ref:")
+    assert scan(tmp_path) == []
+
+
+def test_a_submodule_is_checked_on_its_own(tmp_path):
+    # A submodule's .git is a file with a relative path (gitdir: ../../.git/modules/…), read from the submodule.
+    library = tmp_path.parent / "library"
+    write(library, "src/lib.py", "# DEMO-9\n")
+    _git(library, "init", "-q", "-b", "main")
+    _git(library, "add", "-A")
+    _git(library, "commit", "-q", "-m", "init")
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(library), "libs/library")
+    pointer = (tmp_path / "libs" / "library" / ".git").read_text(encoding="utf-8")
+    assert pointer.startswith("gitdir: ../")
+
+    assert (tmp_path / "libs" / "library" / "src" / "lib.py").is_file()
+    assert scan(tmp_path) == []
+
+
+def _git_dir(folder: Path, head: bytes | None = b"ref: refs/heads/main\n", objects: bool = True,
+             refs: bool = True) -> None:
+    """Write by hand what git asks of a git directory, so a test can leave one part out or get it wrong."""
+    folder.mkdir(parents=True, exist_ok=True)
+    if head is not None:
+        (folder / "HEAD").write_bytes(head)
+    if objects:
+        (folder / "objects").mkdir()
+    if refs:
+        (folder / "refs").mkdir()
+
+
+# Hand-written .git that git takes for a repository. Each made-up one further down is one step away from one of
+# these, so it is that step that makes it made up.
+_POINTERS_GIT_ACCEPTS = {                                  # a .git file beside the git directory "x" it names
+    "pointer": b"gitdir: x\n",
+    "pointer-ending-in-crlf-and-blank-lines": b"gitdir: x\r\n\r\n",
+}
+_HEADS_GIT_ACCEPTS = {                                     # HEAD in a .git folder that has objects/ and refs/
+    "head-naming-a-branch": b"ref: refs/heads/main\n",
+    "head-with-no-blank-after-ref": b"ref:refs/heads/main\n",
+    "head-with-a-line-break-after-ref": b"ref:\n\t refs/heads/main\n",
+    "head-naming-a-branch-not-in-utf8": "ref: refs/heads/分支\n".encode("gbk"),
+    "head-naming-a-commit-in-capitals": b"0123456789ABCDEF0123456789ABCDEF01234567\n",
+}
+_COMMONDIRS_GIT_ACCEPTS = {                                # commondir in a worktree's git directory "x"
+    "commondir-naming-the-repository": b"../common\n",
+}
+# What git refuses: it reads these files whole, takes nothing but "gitdir: " before a path, and nothing but
+# blanks, tabs and line breaks between "ref:" and "refs/".
+_POINTERS_GIT_REFUSES = {
+    "pointer-without-gitdir": b"folder: x\n",
+    "pointer-without-the-blank": b"gitdir:x\n",
+    "pointer-after-a-blank": b" gitdir: x\n",
+    "pointer-with-two-blanks": b"gitdir:  x\n",
+    "pointer-with-a-blank-after-the-path": b"gitdir: x \n",
+    "pointer-with-a-second-line": b"gitdir: x\nmore\n",
+    "pointer-not-utf8": "gitdir: D:/项目/.git/worktrees/x\n".encode("gbk"),
+    "pointer-with-nul-in-the-path": b"gitdir: a\x00b\n",
+    "pointer-empty": b"",
+}
+_HEADS_GIT_REFUSES = {
+    "head-empty": b"",
+    "head-naming-nothing-under-refs": b"ref: main\n",
+    "head-after-a-blank": b" ref: refs/heads/main\n",
+    "head-with-a-form-feed-after-ref": b"ref:\x0crefs/heads/main\n",
+    "head-with-a-wide-blank-after-ref": "ref:\u3000refs/heads/main\n".encode("utf-8"),
+    "head-one-digit-short-of-a-commit": b"0123456789abcdef0123456789abcdef0123456\n",
+}
+_COMMONDIRS_GIT_REFUSES = {
+    "commondir-naming-nothing": b"../nowhere\n",
+    "commondir-after-a-blank": b" ../common\n",
+    "commondir-with-a-second-line": b"../common\nmore\n",
+}
+_FOLDERS_GIT_REFUSES = ("points-nowhere", "points-at-a-plain-folder", "points-at-a-folder-with-only-head",
+                        "no-path-in-a-folder-laid-out-like-a-git-directory", "empty-folder",
+                        "folder-with-only-an-empty-head", "folder-without-head", "folder-without-objects",
+                        "folder-without-refs")
+
+
+def _hand_written_dot_git(folder: Path, kind: str) -> None:
+    marker = folder / ".git"
+    pointer = {**_POINTERS_GIT_ACCEPTS, **_POINTERS_GIT_REFUSES}.get(kind)
+    head = {**_HEADS_GIT_ACCEPTS, **_HEADS_GIT_REFUSES}.get(kind)
+    commondir = {**_COMMONDIRS_GIT_ACCEPTS, **_COMMONDIRS_GIT_REFUSES}.get(kind)
+    if pointer is not None:
+        _git_dir(folder / "x")
+        marker.write_bytes(pointer)
+    elif head is not None:
+        _git_dir(marker, head=head)
+    elif commondir is not None:
+        # A linked worktree: git looks for objects/ and refs/ where commondir says, not beside it.
+        _git_dir(folder / "common")
+        _git_dir(folder / "x", objects=kind in _COMMONDIRS_GIT_REFUSES, refs=kind in _COMMONDIRS_GIT_REFUSES)
+        (folder / "x" / "commondir").write_bytes(commondir)
+        marker.write_bytes(b"gitdir: x\n")
+    elif kind == "points-nowhere":
+        marker.write_bytes(b"gitdir: x\n")
+    elif kind == "points-at-a-plain-folder":
+        (folder / "x").mkdir()
+        marker.write_bytes(b"gitdir: x\n")
+    elif kind == "points-at-a-folder-with-only-head":
+        _git_dir(folder / "x", objects=False, refs=False)
+        marker.write_bytes(b"gitdir: x\n")
+    elif kind == "no-path-in-a-folder-laid-out-like-a-git-directory":
+        _git_dir(folder)
+        marker.write_bytes(b"gitdir: \n")
+    elif kind == "empty-folder":
+        marker.mkdir()
+    elif kind == "folder-with-only-an-empty-head":
+        _git_dir(marker, head=b"", objects=False, refs=False)
+    elif kind == "folder-without-head":
+        _git_dir(marker, head=None)
+    elif kind == "folder-without-objects":
+        _git_dir(marker, objects=False)
+    else:
+        assert kind == "folder-without-refs"
+        _git_dir(marker, refs=False)
+
+
+@pytest.mark.parametrize("kind", [*_POINTERS_GIT_ACCEPTS, *_HEADS_GIT_ACCEPTS, *_COMMONDIRS_GIT_ACCEPTS])
+def test_a_folder_with_a_dot_git_that_git_accepts_is_checked_on_its_own(tmp_path, kind):
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "src/app.py", "# DEMO-9\n")
+    _hand_written_dot_git(tmp_path / "src", kind)
+
+    assert scan(tmp_path) == []
+
+
+@pytest.mark.parametrize("kind", [*_POINTERS_GIT_REFUSES, *_HEADS_GIT_REFUSES, *_COMMONDIRS_GIT_REFUSES,
+                                  *_FOLDERS_GIT_REFUSES])
+def test_a_folder_with_a_made_up_dot_git_is_still_checked(tmp_path, kind):
+    # git goes on tracking a folder that merely holds something named .git, and .git itself is never committed,
+    # so a made-up one must not take the folder out of the check. Made up means git would not take it for a
+    # repository: it asks for a HEAD that names a branch or a commit, and for objects/ and refs/.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "src/app.py", "# DEMO-9\n")
+    _hand_written_dot_git(tmp_path / "src", kind)
+
+    assert [(f.rule, f.path) for f in scan(tmp_path)] == [("dangling-ref", "src/app.py")]
+
+
+@pytest.mark.parametrize("dot_git", ["a pointer at the project's own .git", "git init"])
+def test_a_tracked_folder_is_still_checked_when_a_dot_git_that_git_accepts_is_put_in_it(tmp_path, dot_git):
+    # A .git that git accepts does not take a folder out of the repository that already tracks it: git goes on
+    # tracking and committing the files, and .git shows in no status and no commit. Nothing in the folder tells
+    # it from another checkout, only the index does, so for a folder with such a .git the check asks git.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n- DEMO-2：two\n")
+    write(tmp_path, "src/app.py", "# DEMO-1\n")
+    write(tmp_path, "src/tests/test_app.py", "# DEMO-2\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    if dot_git == "git init":
+        _git(tmp_path / "src", "init", "-q", "-b", "main")
+    else:
+        write(tmp_path, "src/.git", "gitdir: ../.git\n")
+    write(tmp_path, "src/app.py", "# DEMO-9\n")
+    write(tmp_path, "src/new.py", "# DEMO-8\n")
+    # The premise: the project's repository still takes the change and the new file for its own.
+    assert _git(tmp_path, "status", "--porcelain").stdout.splitlines() == [" M src/app.py", "?? src/new.py"]
+
+    assert [(f.rule, f.path) for f in scan(tmp_path)] == [
+        ("dangling-ref", "src/app.py"), ("dangling-ref", "src/new.py")]
+    assert report(tmp_path) == ["未被测试引用：DEMO-1"]
+
+
+def test_a_tracked_folder_is_still_checked_when_the_index_spells_it_in_another_case(tmp_path):
+    # Windows and macOS let a folder be renamed to another case without git noticing: the index keeps the old
+    # spelling and the files stay tracked. Where case matters the renamed folder is a new one, and it is checked
+    # all the same: comparing without case can only add to what is checked.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "Src/app.py", "# DEMO-9\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "init")
+    (tmp_path / "Src").rename(tmp_path / "moved")
+    (tmp_path / "moved").rename(tmp_path / "SRC")
+    write(tmp_path, "SRC/.git", "gitdir: ../.git\n")
+
+    assert [(f.rule, f.path) for f in scan(tmp_path)] == [("dangling-ref", "SRC/app.py")]
+
+
+def test_a_nested_repository_is_left_out_where_git_cannot_be_asked(tmp_path, monkeypatch):
+    # git is asked only to tell a tracked folder from another checkout. Without it there is no index to say
+    # so, the check must still run, and the folder is judged by its .git alone.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    nested = tmp_path / "vendor" / "tool"
+    write(nested, "tests/test_tool.py", "# DEMO-9\n")
+    _git(nested, "init", "-q", "-b", "main")
+    programs = tmp_path.parent / "no git here"
+    programs.mkdir()
+    monkeypatch.setenv("PATH", str(programs))
+    with pytest.raises(OSError):
+        _git(tmp_path, "--version")
+
+    assert scan(tmp_path) == []
+
+
+def test_git_is_asked_once_and_only_for_a_folder_with_a_dot_git_that_git_accepts(tmp_path, monkeypatch):
+    # Reading files answers everything else, so a project without such a folder is checked without starting
+    # git at all, and one with many is checked with a single question.
+    asked = []
+    run = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda command, **options: asked.append(command) or run(command, **options))
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "src/app.py", "# DEMO-1\n")
+    _hand_written_dot_git(tmp_path / "src", "points-nowhere")
+    assert scan(tmp_path) == []
+    assert asked == []
+
+    for name in ("one", "two"):
+        write(tmp_path, f"vendor/{name}/app.py", "# DEMO-9\n")
+        _hand_written_dot_git(tmp_path / "vendor" / name, "pointer")
+    assert scan(tmp_path) == []
+    assert len(asked) == 1
+
+
+@contextlib.contextmanager
+def _unreadable(path: Path):
+    """Make a file impossible to open the way each system can: held by a process, or without permission."""
+    if os.name == "nt":
+        import _winapi
+        handle = _winapi.CreateFile(str(path), _winapi.GENERIC_READ, 0, 0, _winapi.OPEN_EXISTING, 0, 0)
+        try:
+            yield
+        finally:
+            _winapi.CloseHandle(handle)
+    else:
+        if os.geteuid() == 0:
+            pytest.skip("root can read any file")
+        path.chmod(0)
+        try:
+            yield
+        finally:
+            path.chmod(0o644)
+
+
+def test_a_dot_git_that_cannot_be_read_does_not_stop_the_check(tmp_path):
+    # Looking into .git must not add a way to crash: before, a folder like this was simply checked.
+    write(tmp_path, "docs/requirements/demo.md", "代号：DEMO\n- DEMO-1：one\n")
+    write(tmp_path, "src/app.py", "# DEMO-9\n")
+    marker = write(tmp_path, "src/.git", "gitdir: x\n")
+    with _unreadable(marker):
+        with pytest.raises(OSError):
+            marker.read_text(encoding="utf-8")
+
+        assert [(f.rule, f.path) for f in scan(tmp_path)] == [("dangling-ref", "src/app.py")]
+
+
 def test_report_and_cli(tmp_path, capsys):
     write(tmp_path, "docs/requirements/demo.md", """代号：DEMO
 - DEMO-1：one
@@ -211,9 +507,11 @@ def test_list_rules_and_version(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert [line.split()[0] for line in lines[:len(spec_check.RULES)]] == list(spec_check.RULES)
     assert all(len(line.split(maxsplit=1)) == 2 for line in lines[:len(spec_check.RULES)])
-    assert lines[-1].startswith("范围：")
+    assert lines[-1].startswith("范围：") and "嵌套的 git 工作区" in lines[-1]
     assert main(["--version"]) == 0
-    assert "spec_check" in capsys.readouterr().out
+    assert capsys.readouterr().out == f"spec_check {spec_check.VERSION}\n"
+    # The first line of the file is the version a project sees when it opens its vendored copy.
+    assert spec_check.__doc__.splitlines()[0] == f"spec_check v{spec_check.VERSION}"
 
 
 def test_ignore_pattern_separators(tmp_path):
