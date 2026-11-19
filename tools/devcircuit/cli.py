@@ -349,18 +349,20 @@ def _context(args) -> int:
     if not root.is_dir():
         print(f"项目目录不存在：{root}", file=sys.stderr)
         return 2
+    # The commands an answer prints must reach this project too, from wherever this call was made.
+    flags = context_module.carried_flags(args.root, args.base)
     try:
         if args.map:
             code, text = 0, context_module.render_map(root)
         elif args.capability:
-            code, text = context_module.render_capability(root, args.capability)
+            code, text = context_module.render_capability(root, args.capability, flags)
         elif args.ids:
             ids = [item for item in ledger_module.ID_SEPARATORS.split(args.ids) if item]
-            code, text = context_module.render_ids(root, ids, args.max_chars)
+            code, text = context_module.render_ids(root, ids, args.max_chars, flags)
         else:
             feature = args.feature or args.review
             code, text = 0, context_module.render_feature(root, feature, args.base, bool(args.review),
-                                                          args.max_chars)
+                                                          args.max_chars, flags)
     except context_module.ContextError as error:
         print(str(error), file=sys.stderr)
         return 2
@@ -450,15 +452,15 @@ def main(argv: list[str] | None = None) -> int:
 
     context = sub.add_parser("context", help="按需取现行设计：能力清单、要求原文、某个功能的上下文")
     mode = context.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--map", action="store_true", help="能力清单、在研功能、框架摘要位置、其他文档、待做数")
+    mode.add_argument("--map", action="store_true", help="能力清单、本工作树里的在研功能、框架摘要位置、其他文档、待做数")
     mode.add_argument("--capability", metavar="CODE", help="某个能力的要求清单（每条一行）")
     mode.add_argument("--ids", metavar="ID[,ID...]", help="这些要求的原文和例子")
-    mode.add_argument("--feature", metavar="NAME", help="功能的卡、分支改到或引用到的要求、相关测试")
+    mode.add_argument("--feature", metavar="NAME", help="功能的卡、当前分支相对基线改到或引用到的要求、相关测试")
     mode.add_argument("--review", metavar="NAME", help="同 --feature，另加基线和改动统计，交给审核")
     context.add_argument("--base", default=None, help="对比的基线分支（默认取 AGENTS.md 写的主干，没写就用远端默认分支，再没有就 main / master）")
     context.add_argument("--root", default=".", help="项目目录（默认当前目录）")
     context.add_argument("--max-chars", type=int, default=context_module.DEFAULT_MAX_CHARS,
-                         help="要求原文部分的字数上限，超出时截断并列出没给的编号")
+                         help="要求原文部分的字数上限，超出时截断，并给出补读其余编号的命令（命令不计入上限）")
 
     close = sub.add_parser("close", help="收尾一个功能：检查、账本核对、删卡并提交、写收尾记录、给出交付报告骨架")
     close.add_argument("feature", help="功能名，和 specs/<feature>/ 一致")

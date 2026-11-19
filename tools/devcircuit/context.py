@@ -1,14 +1,18 @@
 """`devcircuit context`: read the parts of the current design a task needs, and say what was left out.
 
 Modes:
-  --map            capabilities, features in progress, where the framework summary is, other docs, backlog size
+  --map            capabilities, the cards in this worktree, where the framework summary is, other docs, backlog size
   --capability C   one line per requirement of capability C
   --ids A,B        the full text of these requirements
-  --feature F      card, requirements the branch added or rewrote, requirements its code cites, related tests
+  --feature F      card, requirements the checked-out branch added or rewrote, requirements its code cites, tests
   --review F       --feature plus the merge base and a diff summary, for the reviewer
+
+What it cannot read (a slice line, the card's 能力 line) or had to leave out (a truncated list) it says,
+with the text or the command to go on from; it does not answer from the part it could read.
 """
 
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
@@ -21,14 +25,44 @@ ARCHITECTURE = "docs/architecture.md"
 SUMMARY_ANCHOR = re.compile(r"<a\s+id=[\"']summary[\"']")
 HEADING = re.compile(r"^(#{1,6})\s")
 READ_ME = re.compile(r"^>\s*\*\*读我\*\*\s*[：:]\s*(.*)$")
-CURRENT_SLICE = re.compile(r"^-\s+(S\d+[：:].*?)\s*[（(]当前[）)]")
-SLICE = re.compile(r"^-\s+(S\d+[：:].*)$")
-CAPABILITY_LINE = re.compile(r"^能力[：:]\s*(.*)$")
-TRUNK_LINE = re.compile(  # "- 主干：`main`", "1. **主干**: main", "**主干：** main", or "| 主干 | main |"
+BULLET = r"(?:[-*+]|\d+[.)])"
+FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})")  # (?!.*`): "```make``` 之后…" is inline code, not an opening fence
+# "## 切片", "## 切片计划", "## 切片 3 个"; not "## 切片 1：建表", which is a slice written as a heading
+SLICE_SECTION = re.compile(r"^(#{1,6})\s*切片(?!\s*[Ss]?\d+\s*[：:])")
+# A slice line is a top-level list item "S<n>：<title>". The shape is read loosely (any bullet, a task box,
+# bold, a small s, either colon, a space before it); the state is not: a ✓ in the title or a ticked box
+# means done, （当前） after the title means in progress, and no other word is a state.
+# A small s with a Latin name run straight on from a half-width colon is not read: "- s3:GetObject" is as
+# likely a permission as a slice, so it falls to SLICE_LIKE and is reported. "- s3://bucket" is an address.
+SLICE = re.compile(r"^" + BULLET + r"\s+(?:\[(?P<box>[ xX])\]\s+)?(?P<bold>\*\*)?(?:S|s(?!\d+:[A-Za-z*]))"
+                   r"(?P<number>\d+)(?:\*\*)?\s*(?:\*\*)?(?P<colon>[：:])(?!//)(?P<title>.*)$")
+CURRENT_MARK = re.compile(r"\s*[（(]当前[）)]")
+# A state written where ✓ or （当前） goes, in a mark or a word that is not read: another tick anywhere in
+# the title, one of these words in brackets at its end (before closing marks and a full stop). The line is
+# reported, not read without its state: read so, a slice marked （进行中） was one not started, and --map
+# named an earlier open slice instead.
+OTHER_TICK = re.compile(r"[✔✅☑√]")
+OTHER_STATE = re.compile(r"[（(【\[]\s*(?:当前|在做|进行中|下一个|待做|完成|已完成|做完)\s*[）)】\]][\s*_`~。.；;，,]*$")
+# What a reader takes for a slice line: a list item, a heading below the card's title or a table row that,
+# past task boxes, bracketed words and marks such as ** ` ~~ ✓ in any order, starts with S<n> or 切片 <n>.
+# One of these that SLICE cannot read is reported with its text: skipping it made --map name the wrong slice.
+SLICE_LIKE = re.compile(r"^(?:" + BULLET + r"|#{2,6}|\|)\s*(?:(?:[（(【\[][^）)】\]]{0,8}[）)】\]]|[^\w\s]|_)\s*){0,6}"
+                        r"(?:[Ss]\d(?!\d*://)|切片\s*[Ss]?\d)")
+SLICE_FORM = "写成 `- S<n>：<标题>`，在做的加（当前），做完的加 ✓"
+
+
+def _labelled_line(label: str) -> re.Pattern:
+    """A "<label>：<value>" line: "- 主干：`main`", "1. **主干**: main", "**主干：** main", or "| 主干 | main |"."""
     # [^\S\n] is any whitespace but a newline: full-width and no-break spaces count, as they do in Chinese text.
-    r"^[^\S\n]*(?:(?:[-*+]|\d+[.)])[^\S\n]+)?(?:\*\*)?主干(?:\*\*)?[^\S\n]*[：:][^\S\n]*(?:\*\*)?(?P<value>[^\n]*)$"
-    r"|^[^\S\n]*\|[^\S\n]*(?:\*\*)?主干(?:\*\*)?[^\S\n]*\|(?P<cell>[^|\n]*)\|",
-    re.MULTILINE)
+    name = r"(?:\*\*)?" + label + r"(?:\*\*)?[^\S\n]*"
+    return re.compile(
+        r"^[^\S\n]*(?:" + BULLET + r"[^\S\n]+)?" + name + r"[：:][^\S\n]*(?:\*\*)?(?P<value>[^\n]*)$"
+        r"|^[^\S\n]*\|[^\S\n]*" + name + r"\|(?P<cell>[^|\n]*)\|",
+        re.MULTILINE)
+
+
+CAPABILITY_LINE = _labelled_line("能力")  # on a card: "能力：<代号>（已有 / 新建）· 框架：…"
+TRUNK_LINE = _labelled_line("主干")       # in AGENTS.md: "- 主干：`main`"
 TRUNK_NAME = re.compile(r"\s*(?:\*\*)?`?([^\s`（(，,。；;|*]+)")
 CODE_WORD = re.compile(r"(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])")
 MAX_TITLE = 160
@@ -60,6 +94,17 @@ class Capability:
     path: str
     title: str
     entries: tuple[Entry, ...]
+
+
+@dataclass(frozen=True)
+class Slice:
+    """One slice line of a card."""
+    id: str        # "S3"
+    title: str     # what follows the colon, up to the （当前） mark; a ✓ stays where it was written
+    done: bool     # a ✓ in the title, or a ticked task box: the one rule for done
+    current: bool  # （当前） after the title
+    line: int      # 1-based line on the card
+    label: str     # "S3：<title>" with the colon and the spacing as written, the way --map shows it
 
 
 @lru_cache(maxsize=1)
@@ -161,6 +206,15 @@ def remote_trunk(root: Path) -> str | None:
     """The remote's default branch (origin/HEAD), without the origin/ prefix."""
     ref = (_git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD") or "").strip()
     return ref.split("/", 1)[1] if ref.startswith("origin/") else None
+
+
+def current_branch(root: Path) -> str | None:
+    """The checked-out branch (also before its first commit); None on a detached HEAD or outside git."""
+    return (_git(root, "symbolic-ref", "--quiet", "--short", "HEAD") or "").strip() or None
+
+
+def _detached(root: Path) -> str:
+    return f"游离 HEAD {(_git(root, 'rev-parse', '--short=7', 'HEAD') or '').strip()}"
 
 
 def merge_base(root: Path, base: str | None) -> tuple[str, str] | None:
@@ -272,16 +326,88 @@ def _summary_text(root: Path) -> str:
     return "\n".join(line for line in lines[start:end]).strip()
 
 
+def _slice_lines(lines: list[str]) -> tuple[list[tuple[int, str]], bool]:
+    """The (number, line) pairs slices are read from, and whether the card has a 切片 section.
+
+    Every section whose heading starts with 切片 is read, to the next heading of its level or above;
+    a card without one is read whole. A line inside a fenced block is not a heading, and a heading written
+    like a slice does not end the section: each of them, taken for the end, hid the slices after it.
+    """
+    inside: list[tuple[int, str]] = []
+    level = fence = None
+    found = False
+    for number, line in enumerate(lines, 1):
+        text = line.strip()
+        if fence:  # closed by its own character, at least as many of them, and nothing else on the line
+            if text.startswith(fence) and not text.strip(fence[0]):
+                fence = None
+        elif opening := FENCE.match(line):
+            fence = opening.group(1)
+        elif (section := SLICE_SECTION.match(line)) and (level is None or len(section.group(1)) <= level):
+            level, found = len(section.group(1)), True
+            continue
+        elif (level is not None and (heading := HEADING.match(line)) and len(heading.group(1)) <= level
+              and not SLICE_LIKE.match(line)):
+            level = None
+        if level is not None:
+            inside.append((number, line))
+    return (inside, True) if found else (list(enumerate(lines, 1)), False)
+
+
+def read_slices(card_text: str) -> tuple[list[Slice], list[tuple[int, str]]]:
+    """The slices on a card, and the lines (number, text) that look like slices but cannot be read.
+
+    Only top-level lines of the 切片 sections count; indented lines are steps.
+    """
+    slices: list[Slice] = []
+    unreadable: list[tuple[int, str]] = []
+    for number, line in _slice_lines(card_text.splitlines())[0]:
+        match = SLICE.match(line)
+        if not match:
+            if SLICE_LIKE.match(line):
+                unreadable.append((number, line.rstrip()))
+            continue
+        written = match.group("title")
+        if match.group("bold"):  # "- **S3：读回**": the closing marks are not part of the title
+            written = written.replace("**", "")
+        current = CURRENT_MARK.search(written)
+        shown = (written[:current.start()] if current else written).rstrip()
+        if OTHER_TICK.search(written) or OTHER_STATE.search(shown):
+            unreadable.append((number, line.rstrip()))
+            continue
+        identifier = f"S{match.group('number')}"
+        done = "✓" in written or match.group("box") in ("x", "X")
+        slices.append(Slice(identifier, shown.strip(), done, current is not None, number,
+                            f"{identifier}{match.group('colon')}{shown}"))
+    return slices, unreadable
+
+
+def slice_status(card_text: str) -> str:
+    """What --map says about a card: the slice in progress, else the first one not done.
+
+    A line that cannot be read is quoted instead, with no state at all: a state built from the lines
+    that did parse is what pointed at the wrong slice.
+    """
+    slices, unreadable = read_slices(card_text)
+    if unreadable:
+        number, raw = unreadable[0]
+        raw = raw if len(raw) <= MAX_TITLE else raw[:MAX_TITLE] + "…"
+        more = f"，另有 {len(unreadable) - 1} 行" if len(unreadable) > 1 else ""
+        return f"切片行读不懂（第 {number} 行{more}）：{raw}  ← {SLICE_FORM}"
+    for found in slices:
+        if found.current:
+            return f"当前：{found.label}"
+    for found in slices:
+        if not found.done:
+            return f"下一个：{found.label}"
+    if slices:
+        return "切片都已完成"
+    inside, section = _slice_lines(card_text.splitlines())
+    return f"没读到切片行：{SLICE_FORM}" if section and any(line.strip() for _, line in inside) else "还没有切片"
+
+
 def _slice_status(card: Path) -> str:
-    lines = card.read_text(encoding="utf-8-sig").splitlines()
-    for line in lines:
-        if match := CURRENT_SLICE.match(line):
-            return f"当前：{match.group(1)}"
-    slices = [match.group(1) for line in lines if (match := SLICE.match(line))]
-    pending = [title for title in slices if "✓" not in title]
-    if pending:
-        return f"下一个：{pending[0]}"
-    return "切片都已完成" if slices else "还没有切片"
+    return slice_status(card.read_text(encoding="utf-8-sig"))
 
 
 def _read_me(path: Path) -> str:
@@ -307,28 +433,74 @@ def _other_docs(root: Path) -> list[str]:
     return lines
 
 
-def _fit(blocks: list[tuple[str, str]], budget: int) -> tuple[list[str], list[str]]:
-    """Keep whole blocks while they fit the budget; return kept texts and the IDs left out."""
+def _fit(blocks: list[tuple[str, str]], budget: int) -> tuple[list[str], list[tuple[str, str]]]:
+    """Keep whole blocks while they fit the budget; return kept texts and the blocks left out."""
     kept: list[str] = []
     used = 0
     for position, (identifier, text) in enumerate(blocks):
         if kept and used + len(text) + 2 > budget:
-            return kept, [item for item, _ in blocks[position:]]
+            return kept, blocks[position:]
         kept.append(text)
         used += len(text) + 2
     return kept, []
 
 
-def _truncation_note(dropped: list[str]) -> str:
-    listed = ",".join(dropped[:MAX_LISTED_IDS]) + ("…" if len(dropped) > MAX_LISTED_IDS else "")
-    return f"（截断：还有 {len(dropped)} 条没列出，用 devcircuit context --ids {listed} 补读）"
+def _quoted(text: str) -> str:
+    """Double quotes pass through bash, cmd and PowerShell alike; single ones where " $ ` or \\ would be read."""
+    return shlex.quote(text) if re.search(r'["$`\\]', text) else f'"{text}"'
+
+
+def carried_flags(root: str, base: str | None) -> str:
+    """The --base and --root this call was given, to append to the commands its output tells the reader to run.
+
+    Without them a command printed for a project elsewhere would run against the current directory.
+    """
+    flags = f" --base {_quoted(base)}" if base else ""
+    if root != ".":  # forward slashes: a backslash before the closing quote would escape it
+        flags += f" --root {_quoted(Path(root).as_posix())}"
+    return flags
+
+
+def _truncation_note(dropped: list[tuple[str, str]], flags: str = "") -> str:
+    """Name every requirement left out, in commands that run as printed, one per line.
+
+    The batches are packed the way --ids packs at its default limit, so none of them is cut again.
+    The first 10 IDs followed by `…` could not be run, and named nothing after the tenth.
+    """
+    commands: list[str] = []
+    rest = dropped
+    while rest:
+        kept, later = _fit(rest, DEFAULT_MAX_CHARS)
+        batch = ",".join(identifier for identifier, _ in rest[:len(kept)])
+        commands.append(f"devcircuit context --ids {batch}{flags}")
+        rest = later
+    return "\n".join([f"（截断：还有 {len(dropped)} 条没列出，补读用下面的命令，每行一条，原样运行）", *commands])
 
 
 def _card_codes(card_text: str) -> list[str]:
-    for line in card_text.splitlines():
-        if match := CAPABILITY_LINE.match(line.strip()):
-            return CODE_WORD.findall(match.group(1).split("·", 1)[0])
-    return []
+    match = CAPABILITY_LINE.search(card_text)
+    if not match:
+        return []
+    value = match.group("value") if match.group("value") is not None else match.group("cell")
+    return CODE_WORD.findall(value.split("·", 1)[0])
+
+
+def _card_capabilities(card_text: str, capabilities: list[Capability], flags: str = "") -> list[str]:
+    """The requirement lists of the capabilities the card names.
+
+    A card that names no capability spec gets a line saying so: with nothing printed, an unread or
+    misspelt 能力 line looked the same as a capability without requirements.
+    """
+    codes = _card_codes(card_text)
+    lines: list[str] = []
+    for capability in capabilities:
+        if capability.code in codes:
+            lines += _capability_lines(capability, flags)
+    if not lines:
+        read = (f"卡的“能力：”一行写的是 {'、'.join(codes)}，docs/requirements/ 里没有对应的能力规格" if codes
+                else "没从卡里读到“能力：”一行的代号")
+        lines.append(f"{read}，所以没有清单可列。规范写法：`能力：<代号>（已有 / 新建）`；代号见 devcircuit context --map")
+    return lines
 
 
 # ---------------------------------------------------------------- modes
@@ -339,9 +511,13 @@ def render_map(root: Path) -> str:
     out += [f"- {item.code}  {Path(item.path).name}  {item.title}  {len(item.entries)} 条" for item in capabilities]
     if not capabilities:
         out.append("- （还没有能力规格）")
-    out.append("在研功能（specs/；上下文：devcircuit context --feature <名>）")
-    cards = sorted((root / "specs").glob("*/spec.md")) if (root / "specs").is_dir() else []
     in_git = _git(root, "rev-parse", "--is-inside-work-tree") is not None
+    scope = "specs/"
+    if in_git:  # cards on other branches and in other worktrees are not here: say whose list this is
+        branch = current_branch(root)
+        scope = "只列本工作树的 specs/，" + (f"当前分支 {branch}" if branch else f"当前不在分支上：{_detached(root)}")
+    out.append(f"在研功能（{scope}；上下文：devcircuit context --feature <名>）")
+    cards = sorted((root / "specs").glob("*/spec.md")) if (root / "specs").is_dir() else []
     for card in cards:
         relative = f"specs/{card.parent.name}/spec.md"
         # From 0.7 the card is written before the user settles the design; only a committed card is settled.
@@ -362,24 +538,24 @@ def render_map(root: Path) -> str:
     return "\n".join(out)
 
 
-def _capability_lines(capability: Capability) -> list[str]:
+def _capability_lines(capability: Capability, flags: str = "") -> list[str]:
     out = [f"{capability.code}  {capability.title}（{capability.path}，{len(capability.entries)} 条）"]
     out += [entry.title for entry in capability.entries]
     ids = [entry.id for entry in capability.entries]
     if ids:
         listed = ",".join(ids) if len(ids) <= MAX_LISTED_IDS else "<编号>,<编号>"
-        out.append(f"要原文和例子：devcircuit context --ids {listed}")
+        out.append(f"要原文和例子：devcircuit context --ids {listed}{flags}")
     return out
 
 
-def render_capability(root: Path, code: str) -> tuple[int, str]:
+def render_capability(root: Path, code: str, flags: str = "") -> tuple[int, str]:
     for capability in load_capabilities(root):
         if capability.code == code:
-            return 0, "\n".join(_capability_lines(capability))
+            return 0, "\n".join(_capability_lines(capability, flags))
     return 1, f"找不到代号：{code}（能力清单：devcircuit context --map）"
 
 
-def render_ids(root: Path, ids: list[str], max_chars: int = DEFAULT_MAX_CHARS) -> tuple[int, str]:
+def render_ids(root: Path, ids: list[str], max_chars: int = DEFAULT_MAX_CHARS, flags: str = "") -> tuple[int, str]:
     index = {entry.id: entry for capability in load_capabilities(root) for entry in capability.entries}
     blocks = [(identifier, f"{index[identifier].path}:{index[identifier].line}\n{index[identifier].text}")
               for identifier in ids if identifier in index]
@@ -387,14 +563,36 @@ def render_ids(root: Path, ids: list[str], max_chars: int = DEFAULT_MAX_CHARS) -
     kept, dropped = _fit(blocks, max_chars)
     out = ["\n\n".join(kept)] if kept else []
     if dropped:
-        out.append(_truncation_note(dropped))
+        out.append(_truncation_note(dropped, flags))
     if missing:
         out.append("找不到：" + "、".join(missing))
     return (1 if missing else 0), "\n".join(out)
 
 
+def _branch_line(root: Path, feature: str, compared: tuple[str, str] | None) -> str | None:
+    """Which branch is compared with which base, and whether that branch is this feature's; None outside git.
+
+    --feature shows what the checked-out branch changed, whichever feature it was asked about.
+    """
+    if _git(root, "rev-parse", "--is-inside-work-tree") is None:
+        return None
+    branch, expected = current_branch(root), f"feat/{feature}"
+    if branch == expected:
+        who = branch
+    else:
+        who = f"{branch}，不是 {expected}" if branch else f"没有（{_detached(root)}）"
+    if not compared:
+        return f"分支：{who}；基线：没有可比的"
+    line = f"分支：{who}；基线：{compared[0]}（分叉点 {compared[1][:7]}）"
+    if branch == expected:
+        return line
+    if branch == compared[0]:
+        return line + "。下面是当前分支相对基线的全部改动：当前分支就是基线，所以只有还没提交的部分。"
+    return line + f"。下面是当前{'分支' if branch else '提交'}相对基线的全部改动，不一定都属于 {feature}。"
+
+
 def render_feature(root: Path, feature: str, base: str | None = None, review: bool = False,
-                   max_chars: int = DEFAULT_MAX_CHARS) -> str:
+                   max_chars: int = DEFAULT_MAX_CHARS, flags: str = "") -> str:
     card = root / "specs" / feature / "spec.md"
     if not card.is_file():
         raise ContextError(f"找不到卡：specs/{feature}/spec.md（在研功能：devcircuit context --map）")
@@ -439,7 +637,7 @@ def render_feature(root: Path, feature: str, base: str | None = None, review: bo
             if kept[changed_count:]:
                 out.append("\n\n".join(kept[changed_count:]))
         if dropped:
-            out.append(_truncation_note(dropped))
+            out.append(_truncation_note(dropped, flags))
 
         wanted = set(shown)
         tests: dict[str, list[str]] = {}
@@ -460,10 +658,7 @@ def render_feature(root: Path, feature: str, base: str | None = None, review: bo
             out.append(f"框架摘要没改；要用时读 {ARCHITECTURE}#summary")
 
         if not shown:
-            codes_on_card = _card_codes(card_text)
-            for capability in capabilities:
-                if capability.code in codes_on_card:
-                    out += _capability_lines(capability)
+            out += _card_capabilities(card_text, capabilities, flags)
 
         if review:
             out.append(f"== 基线 ==\n{base_sha}（{base_name} 与 HEAD 的分叉点）")
@@ -477,19 +672,16 @@ def render_feature(root: Path, feature: str, base: str | None = None, review: bo
         out.append("没有可比的基线（不是 git 仓库、还没有提交，或找不到 main / master / 远端默认分支；"
                    "可以用 --base 指定，或在 AGENTS.md 写一行主干）。"
                    "下面按卡里的“能力：”列出要求清单。")
-        codes_on_card = _card_codes(card_text)
-        for capability in capabilities:
-            if capability.code in codes_on_card:
-                out += _capability_lines(capability)
-                shown += [entry.id for entry in capability.entries]
+        out += _card_capabilities(card_text, capabilities, flags)
 
     omitted = []
     for capability in capabilities:
         touched = [entry.id for entry in capability.entries if entry.id in set(shown)]
         if touched and len(touched) < len(capability.entries):
             omitted.append(f"{capability.code} 另有 {len(capability.entries) - len(touched)} 条没列出："
-                           f"devcircuit context --capability {capability.code}")
+                           f"devcircuit context --capability {capability.code}{flags}")
     if omitted:
         out.append("== 省略 ==")
         out += omitted
-    return "\n".join(out)
+    where = _branch_line(root, feature, compared)  # put first only now: it is not part of what --max-chars limits
+    return "\n".join([where, *out] if where else out)
