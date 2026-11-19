@@ -47,7 +47,7 @@ pi 只从会话启动目录下的 `.pi/extensions/` 自动加载扩展，而且�
 - `ledger_side` 可选，写 `"human"` 表示账本由 human 在账本一侧维护（强 / 最强档）：开发侧不写也不核对，`devcircuit close` 跳过账本步骤。human 在账本一侧跑 `devcircuit ledger add` / `check` 时，设 `DEVCIRCUIT_LEDGER` 指向账本（`DEVCIRCUIT_PROJECT` 可选，指定 `entries/` 下的项目名）：环境变量优先于 `guard.json`，不设的话，命令读到这份写着 `"human"` 的 `guard.json` 就会拒绝。开发侧这份只写 `ledger_side`、不写 `ledger` 时，`hooks install` 不要求 `--ledger`：换 hook 脚本带 `--force` 重跑即可，不用把账本位置写回来。
 - hook 的路径匹配**也覆盖 guard.json 本身**：配置文件里就有账本路径，它是最直接的泄漏点。hook 用的是主工作区那份、或会话开在项目的子目录里时，从会话目录到找到配置的那一级，沿途各级的 `.dev-circuit/guard.json` 位置也拦：agent 不能在更近处另放一份，把边界换成它写的那份；worktree 要自带配置的，由 human 放。`devcircuit ledger add` / `check` 的命令行里不带账本路径，所以放行；路径由 CLI 进程自己读。`hooks install` 和 `hooks status` 的输出也不带账本路径和 `deny` 里的路径：只说账本配没配、目录在不在（当前用户没有权限看的，写“目录看不到”）、额外拒绝几项，要看路径由 human 打开 `guard.json`。
 - `guard.json` 记录的是本机路径，`hooks install` 会自己把它写进 `.gitignore`（已被更宽的规则忽略就不写）。别让 agent 去改：hook 生效后，命令里出现这个路径就会被拦。hook 脚本和 `hooks install` 对 `.gitignore` 的改动都要在主干上提交：hook 脚本是边界的一部分，值得被 review；留着不提交，`devcircuit close` 会因为工作区不干净而拒绝收尾。
-- Claude Code 的片段只在 hook 脚本存在时才运行它：切到还没装 hook 的旧分支时放行，而不是拦下所有工具调用（python 打不开脚本时退出码是 2，Claude Code 会当成拦截）。Windows 上片段用 `python`，不用 WindowsApps 里的 `python3` 别名。
+- Claude Code 的片段只在 hook 脚本存在时才运行它：切到还没装 hook 的旧分支时放行，而不是拦下所有工具调用（python 打不开脚本时退出码是 2，Claude Code 会当成拦截）。Windows 上片段用 `python`，不用 WindowsApps 里的 `python3` 别名；Linux 和 macOS 上用 PATH 里的 `python3`，不看版本，hook 脚本在 3.8 及以上都能加载（macOS 命令行工具自带的 3.9、Debian 11 的 3.9 都可以）。
 - hook 和 `devcircuit ledger add` / `check`、`close`、`hooks status` 用同一条规则找 `guard.json`：先看本目录，git worktree 里没有就用主工作区的那份；`ledger` 和 `deny` 里的相对路径按那份配置所在的目录（主工作区）解析。hook 还会从会话的当前目录继续往上找，都找不到就不拦任何调用；CLI 的 `--project` 要给项目目录，通常是工作树的顶层：给的是它里面的目录、而上层已经有配置时，`hooks status` 写出该给哪个目录，`hooks install` 以退出码 2 拒绝，不在里面另写一份 `guard.json`。升级前的旧 hook 脚本（没有版本行）没有“用主工作区那份”这一步：分支上还带着旧脚本的 worktree，只要不在主工作区目录里面，旧脚本就找不到配置、不拦任何调用。`hooks status` 这时以退出码 2 写出“这里不拦”一行，`hooks install` 留下旧脚本时也会提醒：把主干合并进那个分支，或在那个 worktree 里 `hooks install --force` 后提交。这个 worktree 的 settings 里登记的是别处的 Claude 脚本（比如主工作区那份）时，status 不拿 worktree 里这份旧脚本判“这里不拦”，“登记 claude”一行会写明命令指向的不是本工作树这份。
 - `hooks install` 在 git worktree 里不另写 `guard.json`，也不要求 `--ledger`：它沿用主工作区的那份，`--ledger` 与现有配置不同就拒绝，主工作区也没有配置时让 human 先到主工作区配置。worktree 里自带一份的（以前手抄的）继续优先，和主工作区那份不一样时 `hooks status` 会提醒，想跟主工作区一致就删掉它。子模块、`--separate-git-dir` 建的仓库、bare 仓库加 worktree 这三种布局没有这条回退，要在 worktree 里自带 `guard.json`：别的工作区已经有一份的，由 human 照那份抄，保留 `project` / `deny` / `ledger_side`，相对路径改成绝对路径；`hooks install` 在那里新写的一份只有账本位置，`hooks status` 和 `hooks install` 在这种 worktree 里会这样提示。在 worktree 里开会话之前要做什么，见 [README 常见问题](../README.zh-CN.md#常见问题)。
 - `hooks install` 写 `guard.json` 是整份替换，内容没变就不重写；`--force` 覆盖项目里的 hook 脚本，但项目里的比本机 devcircuit 带的新时不覆盖，先升级本机的 devcircuit。
@@ -66,11 +66,13 @@ hook 的判定不看工具名：它检查参数中的路径文本，命中当前
 - 不拦向上这条路以外的配置：agent 先在会话目录之外的某个子目录里放一份 `guard.json`，再把会话切进那个子目录，下一次调用就用它。
 - 一个字符串只解析前 64 个 token：后面的内容只按字面比对，相对路径、`~` 开头的路径、带 `..` 的绝对路径、经软链的路径都拦不到。
 - 在 macOS 和 Linux 上不忽略大小写：macOS 默认的文件系统不区分大小写，换了大小写的账本路径照样读得到，hook 拦不到。
-- 项目路径里有 shell 会展开的字符（`$`、`%`、反引号、双引号）时，Claude Code 的 hook 不拦：命令把脚本路径放在双引号里，sh / bash / PowerShell 展开 `$NAME`，cmd 展开 `%NAME%`，展开后路径对不上，命令当成脚本不在而放行。`hooks install` 和 `hooks status` 遇到这种路径会明说；把项目放到不含这些字符的路径下。pi 不经过 shell，不受影响。
+- 项目路径里有 shell 会展开的字符（`$`、反引号、双引号；Windows 上还有 `%`）时，Claude Code 的 hook 不拦：命令把脚本路径放在双引号里，sh / bash / PowerShell 展开 `$NAME`，cmd 展开 `%NAME%`，展开后路径对不上，命令当成脚本不在而放行。`hooks install` 和 `hooks status` 遇到这种路径会明说；把项目放到不含这些字符的路径下。pi 不经过 shell，不受影响。
 - 仅 pi 的 hook 拦不到的两种：Windows 上目录名后多写一个点或空格（`ledgers.\app`），以及百分号编码的路径所在的字符串里另有一个落单的 `%`。
 - 这些写法拦不到：UNC 回环与管理共享（`\\localhost\D$\ledgers\…`、`\\127.0.0.1\D$\…`）、环境变量和不在开头的 `~`（`$HOME/ledgers/…`、`%USERPROFILE%\ledgers\…`、`X=~/ledgers/…`）、通配符（`../led*/…`）、对账本上级目录的递归命令（`grep -r … ..`）、指向账本文件的硬链接。
 - 卷 GUID 路径（`\\?\Volume{…}\ledgers\…`）不保证拦到：hook 不认这种写法，花括号后面那段被当成项目所在盘上的路径来比对，所以只有账本和项目在同一个盘时才碰巧拦得到。
-- `guard.json` 读不出账本位置时（不是 UTF-8 的合法 JSON、不是 JSON 对象、`ledger` 不是非空字符串、文件打不开）不放行：hook 拦下全部工具调用，直到 human 修好这个文件，agent 自己修不了；`hooks status` 这时以退出码 2 写明无法解析。`deny` 写错只是那几项不拦，`hooks status` 会指出来。
+- 往上找 `guard.json` 时，当前用户看不了的位置当作那里没有文件，继续往上找。
+- 工具参数嵌套深到 Python 的 json 读不完时，Claude Code 的 hook 有 `guard.json` 管着就拦下这一次调用，没有就放行；pi 的 hook 不受影响。
+- `guard.json` 读不出账本位置时（不是 UTF-8 的合法 JSON、含 NaN / Infinity、字符串之外嵌套超过 64 层、不是 JSON 对象、`ledger` 写了却按 Python 的 `str.strip()` 是空白、文件打不开）不放行。两个 hook、`hooks status` / `install`、账本命令和 `migrate` 按同一条规则读，结论一样；两个 hook 把 `ledger` 和 `deny` 的条目变成路径时，也按 `str.strip()` 去两端空白。读不出时：hook 拦下全部工具调用，直到 human 修好这个文件，agent 自己修不了；`hooks status` 这时以退出码 2 写明无法解析。`deny` 写错只是那几项不拦，`hooks status` 会指出来。
 - 不管项目之外的安装：全局安装的 pi 扩展（`~/.pi/agent/extensions/`）和用户级登记的 Claude Code hook，`hooks status` 看不到，`hooks install --force` 也更新不到，要手工换成新脚本。
 - 不证明宿主已经加载了 hook：`hooks status` 只看得到文件和 settings，宿主是否已加载，CLI 证明不了，要照下面“验证”第 3 步做一次会话内探针。
 - 不替代 OS 权限：同一用户下，账号本身对账本目录仍然可读。
