@@ -84,11 +84,16 @@ def _uncovered(project: Path, identifiers: list[str]) -> list[str]:
             if identifier not in coverage.tested and identifier not in coverage.demonstrations]
 
 
+def _not_closed(error: ledger.LedgerError) -> CloseError:
+    """A ledger error before the close commit: said with its outcome, or the agent cannot tell whether it closed."""
+    return CloseError(f"{error}。没有收尾")
+
+
 def _check(project: Path, base: str | None):
     try:
         return ledger.check(project, base)[0]
     except ledger.LedgerError as error:
-        raise CloseError(str(error)) from error
+        raise _not_closed(error) from error
     except OSError as error:
         # Only the reason: the message of an OSError names the file it failed on, and that may be the ledger's.
         raise CloseError(f"账本核对没做成：{ledger.why_failed(error)}（不显示出错的文件，免得带出账本路径；"
@@ -224,7 +229,12 @@ def run(project: Path, feature: str, summary: str, review: str | None, base: str
     if not _has_card(project, feature):
         # The card is gone. If a close commit took it, this is a rerun: the project stays as it is.
         head = _already_closed(project, feature)
-        side = _ledger_side(project)
+        try:
+            side = _ledger_side(project)
+        except ledger.LedgerError:
+            # guard.json cannot be read, and the project is closed all the same: the ledger step runs into the
+            # same error, and the report comes out saying so, and that the project needs nothing more.
+            side = "dev"
         compared, uncompared = _baseline(project, base)
         changes = ([], [], []) if uncompared else context.requirement_changes(project, compared[1])
         # Only the name ties this run to that commit, and the name may have been closed before: the card of
@@ -246,7 +256,10 @@ def run(project: Path, feature: str, summary: str, review: str | None, base: str
         print("检查没过，没有收尾：按上面的输出修好、提交后再跑 devcircuit close。", file=out)
         return 1
 
-    side = _ledger_side(project)
+    try:
+        side = _ledger_side(project)
+    except ledger.LedgerError as error:  # guard.json cannot be read
+        raise _not_closed(error) from error
     if side == "dev":
         blocking = [finding for finding in _check(project, base) if finding.feature in (feature, None)]
         if blocking:

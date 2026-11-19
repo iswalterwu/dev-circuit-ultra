@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import context
+from . import context, ledger
 from ._loader import load_script, skill_root
 
 HOOK_FILE = ".githooks/pre-commit"
@@ -58,9 +58,9 @@ def make_executable(path: Path) -> None:
         path.chmod(path.stat().st_mode | 0o111)
 
 
-def git(root: Path, *args: str) -> str:
+def git(root: Path, *args: str, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(["git", "-C", str(root), *args],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise ScaffoldError(f"git {' '.join(args)} 失败（退出码 {result.returncode}）：{detail}")
@@ -251,13 +251,16 @@ def init_ledger(path: Path, commit: bool = True) -> int:
             shutil.copyfile(entry, destination)
     (root / "entries").mkdir(parents=True, exist_ok=True)
 
-    git(root, "init", "-q", "-b", "main")
-    git(root, "add", "-A")
+    # Run from a git hook, GIT_DIR and the like name the project's repository: init would reuse it, and the
+    # template would be committed there.
+    environment = ledger.ledger_environment()
+    git(root, "init", "-q", "-b", "main", env=environment)
+    git(root, "add", "-A", env=environment)
     if commit:
         try:
             git(root, "commit", "-q",
                 "-m", "chore: initialize dev-circuit-ultra ledger",
-                "-m", "为什么：把决策历史放在项目外，只供 human 回溯。")
+                "-m", "为什么：把决策历史放在项目外，只供 human 回溯。", env=environment)
         except ScaffoldError as error:
             raise ScaffoldError(
                 f"{error}\n请先配置 git user.name / git user.email，或使用 --no-commit。") from error

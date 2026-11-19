@@ -101,16 +101,18 @@ def python_command() -> str:
 def shell_expands(hook: Path) -> str:
     """The characters of the script path a shell rewrites inside the double quotes of the Claude command, or "".
 
-    sh, bash and PowerShell expand $NAME and backticks there, cmd expands %NAME%. The path then names nothing,
-    the launcher takes the script for missing, and every call is let through: installed, and not guarding.
+    sh, bash, zsh and PowerShell expand $NAME and backticks there; cmd expands %NAME%, and only Windows has cmd:
+    elsewhere a % stays as it is. The path then names nothing, the launcher takes the script for missing, and
+    every call is let through: installed, and not guarding.
     """
-    return "".join(character for character in "$%`\"" if character in Path(hook).as_posix())
+    path = Path(hook).as_posix()
+    return "".join(character for character in "$%`\"" if character in path and (character != "%" or IS_WINDOWS))
 
 
 def _expands_note(hook: Path, characters: str) -> str:
     return (f"{hook} 的路径里有 shell 会展开的字符（{characters}）：Claude 的 hook 命令把这个路径放在双引号里，"
-            "sh / bash / PowerShell 展开 $NAME 和反引号，cmd 展开 %NAME%；展开后路径对不上，命令当成脚本不在而放行，"
-            "账本边界在这里不拦。把项目放到不含这些字符的路径下。")
+            "sh / bash / zsh / PowerShell 展开 $NAME 和反引号，Windows 的 cmd 还展开 %NAME%（% 只在 Windows 的 cmd 下"
+            "有问题）；展开后路径对不上，命令当成脚本不在而放行，账本边界在这里不拦。把项目放到不含这些字符的路径下。")
 
 
 def claude_snippet(hook: Path) -> str:
@@ -236,41 +238,15 @@ def _rules() -> int:
     return 0
 
 
-def _read_guard(path: Path) -> dict:
-    """The config `hooks install` starts from in a project of its own: whatever it cannot read is written anew."""
-    if not path.is_file():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as error:
-        print(f"警告：{path} 无法解析（{error}），将被覆盖。", file=sys.stderr)
-        return {}
-    return raw if isinstance(raw, dict) else {}
+def _read_guard(path: Path) -> tuple[dict, str]:
+    """The config `hooks install` starts from in a project of its own, and why it cannot be used ("" if it can).
 
-
-def _not_json(constant: str):
-    """NaN and Infinity: python's json reads them, JSON.parse in the pi hook does not."""
-    raise ValueError(constant)
-
-
-def _load_guard(path: Path) -> tuple[dict | None, str]:
-    """guard.json read by the rule the hooks follow: (config, ""), or (None, why it cannot be used).
-
-    UTF-8 with or without a BOM; JSON as both hooks parse it; a JSON object; `ledger`, when it is there, a
-    path that is not blank. The reason is one of a few fixed sentences: a parser's own message can quote the
-    file, which names the ledger.
+    Read as the hooks read it (ledger.read_guard): a file they cannot use is never the start of the new one.
     """
-    try:
-        loaded = json.loads(path.read_bytes().decode("utf-8-sig"), parse_constant=_not_json)
-    except OSError:
-        return None, "读不出这个文件"
-    except (ValueError, RecursionError):
-        return None, "不是合法的 UTF-8 JSON"
-    if not isinstance(loaded, dict):
-        return None, "内容不是一个 JSON 对象"
-    if "ledger" in loaded and not (isinstance(loaded["ledger"], str) and loaded["ledger"].strip()):
-        return None, "ledger 应该是非空的路径字符串"
-    return loaded, ""
+    if not path.is_file():
+        return {}, ""
+    config, problem = ledger_module.read_guard(path)
+    return (config, "") if config is not None else ({}, problem)
 
 
 def _guard_site(project: Path) -> tuple[Path | None, Path, str, Path | None, bool]:
@@ -413,7 +389,7 @@ def _worktree_refusal(harness: str, found: Path | None, root: Path, main: Path, 
     for path, base in dict.fromkeys([(found, root), (shared, main)]):
         if not path.is_file() or (path != found and wanted is None):
             continue
-        config, problem = _load_guard(path)
+        config, problem = ledger_module.read_guard(path)
         if config is None:
             return f"{path} 无法解析：{problem}。由 human 修好它，再回到这个 worktree。"
         ledger = config.get("ledger")
@@ -453,13 +429,19 @@ def _install_hooks(args) -> int:
         kept = "本工作树自带的那份" if source == ledger_module.HERE else "主工作树的那份，linked worktree 里不另写"
     else:
         config_path = project / CONFIG_DIR / CONFIG_NAME
-        config = _read_guard(config_path)
+        config, problem = _read_guard(config_path)
+        if problem and wanted is None:
+            print(f"{config_path} 无法解析：{problem}。两个 hook 读不出这样的配置，会拦下全部工具调用。由 human 修好这个文件"
+                  "再重跑；或带 --ledger <账本> 重跑，整份改写（原来的 deny / ledger_side / project 不保留）。", file=sys.stderr)
+            return 2
+        if problem:
+            print(f"警告：{config_path} 无法解析：{problem}；按 --ledger 整份改写，原来的 deny / ledger_side / project 不保留。",
+                  file=sys.stderr)
         stored = dict(config)
         if wanted is not None:
             config["ledger"] = str(wanted)
         # With the ledger on the human side the dev side's file may leave the path out: there is none to ask for.
-        human_side = "ledger" not in config and config.get("ledger_side") == ledger_module.HUMAN_SIDE
-        if not human_side and not (isinstance(config.get("ledger"), str) and config["ledger"].strip()):
+        if "ledger" not in config and config.get("ledger_side") != ledger_module.HUMAN_SIDE:
             print("缺少 --ledger：账本在项目之外，需要给它一个绝对路径。", file=sys.stderr)
             if alone:
                 print(f"{NO_FALLBACK}：别的工作区已有一份 guard.json 的，由 human 照那份抄进这个 worktree，{CARRY_OVER}。",
@@ -468,8 +450,20 @@ def _install_hooks(args) -> int:
         kept = "没有改动，未重写" if config == stored else None
         if kept is None:
             try:
+                # allow_nan=False: 1e999 reads as infinity, and json writes that as Infinity, which neither hook reads.
+                text = json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+                text.encode("utf-8")  # a lone surrogate, read from the escape \ud800, is no UTF-8 at all
+            except UnicodeEncodeError:
+                print(f"要写进 {config_path} 的内容里有写不成 UTF-8 的字符（单独的代理项，比如 guard.json 里写的 \\ud800）："
+                      "这样的文件写不出来。由 human 把它改掉再重跑；没有写文件，也没有拷 hook 脚本。", file=sys.stderr)
+                return 2
+            except ValueError:
+                print(f"{config_path} 里有 JSON 写不出的数（比如 1e999，读进来是无穷大）：写回去两个 hook 都读不出。"
+                      "由 human 把它改成普通的数再重跑；没有写文件，也没有拷 hook 脚本。", file=sys.stderr)
+                return 2
+            try:
                 config_path.parent.mkdir(parents=True, exist_ok=True)
-                _replace_file(config_path, json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+                _replace_file(config_path, text)
             except OSError:  # the error's own message is left out: nothing here repeats what the file holds
                 print(f"写不进 {config_path}：文件正被占用，或没有写权限。原文件没有动，稍后重试。", file=sys.stderr)
                 return 2
@@ -624,7 +618,7 @@ def _config_lines(config: dict, root: Path, main: Path | None) -> list[str]:
         lines.append(f"额外拒绝 {len(usable)} 项"
                      + ("" if well_formed else "（deny 应该是路径字符串数组，写法不对的部分 hook 不拦）"))
     shared = main / CONFIG_DIR / CONFIG_NAME if main else None
-    theirs = _load_guard(shared)[0] if shared and shared.is_file() else None
+    theirs = ledger_module.read_guard(shared)[0] if shared and shared.is_file() else None
     if shared and shared.is_file() and theirs is None:
         lines.append("提醒：主工作树的 guard.json 无法解析，由 human 修好；本工作树自带的这份优先，在这里不受影响。")
     elif theirs is not None and _effect(theirs, main, main) != _effect(config, root, main):
@@ -683,7 +677,7 @@ def _hook_status(args) -> int:
             f"这是 linked worktree，主工作树（{main}）也没有，要用账本边界由 human 在主工作树配置。" if main
             else carry if alone else below or "跑 devcircuit hooks install 生成。"), file=out)
     else:
-        config, problem = _load_guard(found)
+        config, problem = ledger_module.read_guard(found)
         origin = "本工作树" if source == ledger_module.HERE else "来自主工作树"
         if config is None:
             code, readable = 2, False

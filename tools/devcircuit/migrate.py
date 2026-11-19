@@ -94,7 +94,7 @@ def _cards(project: Path) -> list[str]:
             if section in headings:
                 actions.append(f"{relative}：卡里还有旧的“{section}”一节：要求写进能力规格，结构写进 "
                                "docs/architecture.md，卡只留目标、范围、切片")
-        if not re.search(r"^能力[：:]", text, re.MULTILINE):
+        if not context.CAPABILITY_LINE.search(text):  # as `context --feature` reads it: bold, a bullet, a table row
             actions.append(f"{relative}：卡缺“能力：<代号>（已有 / 新建）· 框架：不变 / 已改”一行")
     return actions
 
@@ -304,7 +304,7 @@ def _claude_settings(project: Path) -> list[str]:
             continue
         try:
             settings = json.loads(_text(path))
-        except ValueError:
+        except (ValueError, RecursionError):  # nested too deep is as unreadable as any other broken file
             continue
         if any("ledger_guard.py" in command and HOOK_LAUNCHER not in command
                for command in _hook_commands(settings)):
@@ -333,11 +333,21 @@ def _tooling(project: Path) -> list[str]:
             actions.append(f"{relative.as_posix()} 不是当前版本："
                            f"devcircuit hooks install --harness {source[0]} --project <项目> --force")
     actions += _claude_settings(project)
+    # Asked first, whatever ledger_side says: both hooks block every tool call on a file they cannot read, and a
+    # human-side setup that skipped the ledger check left that unsaid.
+    found = ledger.locate(project)[0]
+    problem = ledger.read_guard(found)[1] if found else ""
+    if problem:
+        actions.append(f"{ledger.GUARD.as_posix()} 无法解析：{problem}；两个 hook 会拦下全部工具调用，由 human 修好")
+        return actions
     try:
         if not ledger.human_side(project):  # a human-side ledger is a setup, not a to-do
             ledger.resolve(project)
     except ledger.LedgerError as error:
         actions.append(str(error))
+    except OSError as error:  # only the reason: the message of an OSError names the file, and that may be the ledger's
+        actions.append(f"账本检查没做成：{ledger.why_failed(error)}（不显示出错的文件，免得带出账本路径；"
+                       "请人工检查账本目录和权限）")
     return actions
 
 

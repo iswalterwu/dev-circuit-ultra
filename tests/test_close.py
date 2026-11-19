@@ -9,7 +9,8 @@ import pytest
 
 import devcircuit.cli as cli
 import devcircuit.ledger as ledger_module
-from test_ledger import CARD, DEMO, entries, git, names_the_ledger, no_looking_into, setup, write
+from test_ledger import (CARD, DEMO, UNREADABLE_GUARDS, entries, git, names_the_ledger, no_looking_into, setup,
+                         unreadable_guard, write)
 
 
 def designed(tmp_path: Path, capsys, with_record: bool = True) -> tuple[Path, Path]:
@@ -168,10 +169,46 @@ def test_close_stops_readably_when_the_ledger_cannot_be_looked_into(tmp_path: Pa
 
     code, out, err = close(capsys, project)
 
-    assert code == 2 and "Permission denied" in err and "没有收尾" in err
+    assert code == 2 and "账本目录查不了（Permission denied）" in err and "没有收尾" in err
     assert not names_the_ledger(ledger_root, out + err)
     assert git(project, "rev-parse", "HEAD").strip() == before
     assert (project / "specs" / "x" / "spec.md").is_file()
+
+
+@pytest.mark.parametrize("kind", ["nested-100000", "nested-65", "nan", "gbk", "ledger-empty"])
+def test_close_stops_readably_on_a_guard_file_the_hooks_cannot_read(tmp_path: Path, capsys, kind: str) -> None:
+    # A guard.json nested too deep was a traceback; one with a NaN was read as fine, and the feature closed while
+    # the pi hook blocked every tool call on that file.
+    project, ledger_root = designed(tmp_path, capsys)
+    before = git(project, "rev-parse", "HEAD").strip()
+    (project / ".dev-circuit" / "guard.json").write_bytes(unreadable_guard(kind, ledger_root))
+
+    code, out, err = close(capsys, project)
+
+    assert code == 2 and f"guard.json 无法解析：{UNREADABLE_GUARDS[kind]}" in err and "拦下全部工具调用" in err
+    assert "没有收尾" in err  # the agent is told the feature is not closed, not left to guess
+    assert not names_the_ledger(ledger_root, out + err)
+    assert git(project, "rev-parse", "HEAD").strip() == before
+    assert (project / "specs" / "x" / "spec.md").is_file()
+
+
+@pytest.mark.parametrize("kind", ["nested-65", "ledger-empty"])
+def test_a_rerun_on_a_guard_file_the_hooks_cannot_read_still_says_the_project_is_closed(tmp_path: Path, capsys,
+                                                                                       kind: str) -> None:
+    # The close commit is there: the rerun stopped on guard.json before its report, and did not say so.
+    project, ledger_root = designed(tmp_path, capsys)
+    assert close(capsys, project)[0] == 0
+    head = git(project, "rev-parse", "HEAD").strip()
+    (project / ".dev-circuit" / "guard.json").write_bytes(unreadable_guard(kind, ledger_root))
+
+    code, out, err = close(capsys, project)
+
+    assert code == 1, out + err
+    assert "已经收尾过：x" in out and "交付：x" in out and "项目已收尾，不用回退" in out
+    assert f"guard.json 无法解析：{UNREADABLE_GUARDS[kind]}" in out and "没有收尾" not in out + err
+    assert not names_the_ledger(ledger_root, out + err)
+    assert git(project, "rev-parse", "HEAD").strip() == head
+    assert [record["kind"] for record in entries(ledger_root, "x")] == ["design", "close"]
 
 
 def test_close_without_a_ledger_still_closes(tmp_path: Path, capsys) -> None:
@@ -397,6 +434,23 @@ def test_a_check_that_fails_after_the_record_was_written_says_the_record_is_ther
     assert code == 0, out + err
     assert "没有重复写" in out and "账本核对：通过" in out
     assert [record["kind"] for record in entries(ledger_root, "x")] == ["design", "close"]
+
+
+def test_a_rerun_still_reports_on_a_ledger_with_a_record_line_nested_too_deep(tmp_path: Path, capsys) -> None:
+    # json raises RecursionError on such a line, not ValueError. On a rerun that went up as a traceback from the
+    # step whose report has to come out whatever happens.
+    project, ledger_root = designed(tmp_path, capsys)
+    assert close(capsys, project)[0] == 0
+    path = ledger_root / "entries" / "app" / "x.jsonl"
+    path.write_text(path.read_text(encoding="utf-8") + "[" * 100_000 + "\n", encoding="utf-8")
+    git(ledger_root, "commit", "-q", "-am", "hand edit")
+
+    code, out, err = close(capsys, project)
+
+    assert code == 0, out + err
+    assert "交付：x" in out and "没有重复写" in out and "账本核对：通过" in out
+    assert "Traceback" not in out + err
+    assert path.read_text(encoding="utf-8").count('"kind": "close"') == 1
 
 
 def test_a_rerun_commits_the_record_the_ledger_repository_could_not_commit(tmp_path: Path, capsys) -> None:

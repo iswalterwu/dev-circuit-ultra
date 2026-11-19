@@ -11,6 +11,7 @@ import pytest
 import devcircuit.cli as cli
 import devcircuit.migrate as migrate
 from devcircuit._loader import script_path
+from test_ledger import UNREADABLE_GUARDS, names_the_ledger, no_looking_into, unreadable_guard
 
 
 def write(root: Path, rel: str, text: str) -> Path:
@@ -120,6 +121,21 @@ def test_migrate_leaves_a_project_design_doc_alone(tmp_path: Path, capsys) -> No
     assert "design.md" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("line", [  # the shapes tests/test_context.py has `context --feature` read
+    "**能力**：DEMO（已有）· **框架**：不变", "**能力：** DEMO（已有）· 框架：不变", "- 能力：DEMO（已有）", "* **能力**: DEMO",
+    "1. 能力：DEMO（已有）", "- 能力 ：DEMO（已有）· 框架：不变", "| 能力 | DEMO（已有） |",
+], ids=["bold-label", "bold-label-and-colon", "dash", "star-and-bold", "numbered", "space-before-colon", "table-row"])
+def test_migrate_reads_the_capability_line_as_context_does(tmp_path: Path, line: str) -> None:
+    """context took bold, a bullet or a table row; migrate still wanted a bare 能力：, and sent the human to mend a good card."""
+    write(tmp_path, "specs/x/spec.md", f"# x：导出\n\n{line}\n\n## 目标\n\n导出。\n\n## 切片\n\n- S1：导出（当前）\n")
+
+    assert [action for action in migrate.check(tmp_path) if "卡缺" in action] == []
+
+    write(tmp_path, "specs/x/spec.md", "# x：导出\n\n涉及能力 DEMO。\n")   # and a card without one is still listed
+    assert [action for action in migrate.check(tmp_path) if "卡缺" in action] == [
+        "specs/x/spec.md：卡缺“能力：<代号>（已有 / 新建）· 框架：不变 / 已改”一行"]
+
+
 def test_migrate_flags_a_claude_hook_command_that_blocks_without_its_script(tmp_path: Path, capsys) -> None:
     project = tmp_path / "app"
     assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
@@ -135,6 +151,13 @@ def test_migrate_flags_a_claude_hook_command_that_blocks_without_its_script(tmp_
     write(project, ".claude/settings.local.json", cli.claude_snippet(project / ".dev-circuit/hooks/ledger_guard.py"))
     cli.main(["migrate", "--check", "--project", str(project)])
     assert ".claude/settings.local.json" not in capsys.readouterr().out
+
+
+def test_migrate_skips_claude_settings_nested_too_deep_to_read(tmp_path: Path) -> None:
+    """json raises RecursionError on such a file, not ValueError: migrate ended in a traceback."""
+    write(tmp_path, ".claude/settings.local.json", "[" * 100_000)
+
+    assert [action for action in migrate.check(tmp_path) if ".claude/" in action] == []
 
 
 def test_migrate_reports_files_over_the_size_limits(tmp_path: Path, capsys) -> None:
@@ -169,6 +192,82 @@ def test_migrate_accepts_a_human_side_ledger(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
 
     assert cli.main(["migrate", "--check", "--project", str(project)]) == 0, capsys.readouterr().out
+
+
+def migrate_output(capsys, project: Path) -> tuple[int, list[str], str]:
+    code = cli.main(["migrate", "--check", "--project", str(project)])
+    captured = capsys.readouterr()
+    return code, captured.out.splitlines(), captured.out + captured.err
+
+
+@pytest.mark.parametrize("kind", UNREADABLE_GUARDS)
+def test_migrate_lists_a_guard_file_the_hooks_cannot_read(tmp_path: Path, capsys, kind: str) -> None:
+    """A file nested too deep was a traceback; a NaN in it was read as fine, though the pi hook blocks every call on it."""
+    project, ledger_root = tmp_path / "app", tmp_path / "ledgers" / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    write(project, ".dev-circuit/guard.json", "").write_bytes(unreadable_guard(kind, ledger_root))
+    capsys.readouterr()
+
+    code, lines, printed = migrate_output(capsys, project)
+
+    assert code == 1
+    [action] = [line for line in lines if "guard.json" in line]
+    assert f"guard.json 无法解析：{UNREADABLE_GUARDS[kind]}" in action
+    assert "拦下全部工具调用" in action and "human" in action
+    assert "没有配置账本" not in printed and not names_the_ledger(ledger_root, printed)
+
+
+@pytest.mark.parametrize("config", [{"ledger_side": "human", "ledger": ""}, {"ledger_side": "human", "ledger": None}],
+                         ids=["empty", "null"])
+def test_migrate_lists_an_unreadable_guard_file_on_the_human_side_too(tmp_path: Path, capsys, config: dict) -> None:
+    # A human-side ledger is a setup, not a to-do, and migrate looked no further. Both hooks block every call on
+    # this file all the same, and `hooks status` and `ledger check` say so.
+    project = tmp_path / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    write(project, ".dev-circuit/guard.json", json.dumps(config))
+    capsys.readouterr()
+
+    code, lines, _ = migrate_output(capsys, project)
+
+    assert code == 1
+    assert [line for line in lines if "guard.json" in line] == [
+        "1. .dev-circuit/guard.json 无法解析：ledger 应该是非空的路径字符串；两个 hook 会拦下全部工具调用，由 human 修好"]
+
+
+def ledgered_project(tmp_path: Path, capsys) -> tuple[Path, Path]:
+    project, ledger_root = tmp_path / "app", tmp_path / "ledgers" / "app"
+    assert cli.main(["init", "--path", str(project), "--name", "App"]) == 0
+    assert cli.main(["ledger", "init", "--path", str(ledger_root)]) == 0
+    write(project, ".dev-circuit/guard.json", json.dumps({"ledger": str(ledger_root)}))
+    capsys.readouterr()
+    return project, ledger_root
+
+
+def test_migrate_does_not_trace_back_on_a_ledger_it_may_not_look_into(tmp_path: Path, capsys, monkeypatch) -> None:
+    # Before Python 3.14 Path.is_dir() raises PermissionError on such a folder; migrate let it through, and the
+    # traceback named the ledger.
+    project, ledger_root = ledgered_project(tmp_path, capsys)
+    no_looking_into(ledger_root, monkeypatch)
+
+    code, lines, printed = migrate_output(capsys, project)
+
+    assert code == 1 and any("账本目录查不了（Permission denied）" in line for line in lines)
+    assert not names_the_ledger(ledger_root, printed)
+
+
+def test_migrate_says_only_why_when_the_ledger_check_fails_on_a_file(tmp_path: Path, capsys, monkeypatch) -> None:
+    """The net under ledger.resolve: an OSError names the file it failed on, and that may be the ledger's."""
+    project, ledger_root = ledgered_project(tmp_path, capsys)
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(ledger_root / "entries"))
+
+    monkeypatch.setattr(migrate.ledger, "resolve", fail)
+
+    code, lines, printed = migrate_output(capsys, project)
+
+    assert code == 1 and any("账本检查没做成：Permission denied" in line for line in lines)
+    assert not names_the_ledger(ledger_root, printed)
 
 
 def test_migrate_flags_a_ci_workflow_that_never_runs_on_the_trunk(tmp_path: Path, capsys) -> None:

@@ -1,6 +1,5 @@
 """The guards are also a CLI; these tests cover the wrapper, not the rules."""
 
-import contextlib
 import json
 import os
 import shutil
@@ -11,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import devcircuit.cli as cli
+from test_ledger import UNREADABLE_GUARDS, out_of_sight, unreadable_guard
 
 
 def write(root: Path, rel: str, text: str) -> Path:
@@ -298,13 +298,9 @@ def test_hooks_status_in_a_linked_worktree_finds_the_main_trees_config(tmp_path:
     assert "账本：已配置（目录存在）" in hook_status(capsys, deep)[1]
 
 
-@pytest.mark.parametrize("data", [b'{"ledger": ', b"[]", b'{"ledger": 7}', b'{"ledger": " "}', b'{"ledger": null}',
-                                  b"\xef\xbb\xbf{", b"\xff\xfe{}",
-                                  # python's json takes these; JSON.parse in the pi hook does not, and it then blocks every call
-                                  b'{"ledger": "x", "deny": [NaN]}', b'{"ledger": "x", "since": -Infinity}',
-                                  b"[" * 100_000],
-                         ids=["cut-short", "not-an-object", "ledger-not-text", "ledger-blank", "ledger-null",
-                              "bom-then-cut-short", "not-utf8", "nan", "infinity", "nested-too-deep"])
+@pytest.mark.parametrize("data", [*(unreadable_guard(kind, Path("..", "ledgers", "app")) for kind in UNREADABLE_GUARDS),
+                                  b"\xef\xbb\xbf{", b"\xff\xfe{}"],
+                         ids=[*UNREADABLE_GUARDS, "bom-then-cut-short", "not-utf8"])
 def test_hooks_status_reports_a_guard_file_it_cannot_use(tmp_path: Path, capsys, data: bytes) -> None:
     # It exited 0 showing 账本：（未配置） and borrowed install's warning that the file 将被覆盖.
     project = tmp_path / "app"
@@ -314,7 +310,7 @@ def test_hooks_status_reports_a_guard_file_it_cannot_use(tmp_path: Path, capsys,
 
     assert code == 2
     [config] = [line for line in out.splitlines() if line.startswith("配置：")]
-    assert "无法解析" in config and "human" in config
+    assert "无法解析" in config and "human" in config and "ledgers" not in out + err
     assert "将被覆盖" not in out + err and "（未配置）" not in out + err
     assert "账本：" not in out  # nothing is said about a ledger that could not be read
     # scripts from before 0.2.0 let every call through on such a file: 文件不存在 from the probe then proves nothing
@@ -467,26 +463,6 @@ def test_hooks_status_and_install_do_not_print_where_the_ledger_is(tmp_path: Pat
     assert "账本：已配置（目录存在）" in printed[-1] and "额外拒绝 2 项" in printed[-1]
     for secret in (str(ledger), ledger.as_posix(), "ledgers", "private notes"):
         assert secret not in "".join(printed), secret
-
-
-@contextlib.contextmanager
-def out_of_sight(folder: Path):
-    """Take this user's access to a folder and all below it away, as when the ledger belongs to another OS user."""
-    everyone = "*S-1-1-0"  # the well-known SID: the group's name differs with the language of Windows
-    if os.name == "nt":
-        # Listing, traversing and reading attributes, not (RX) as a whole: that takes READ_CONTROL too, and under
-        # the temp folder pytest makes with mode 0o700 not even the owner could then give the access back.
-        subprocess.run(["icacls", str(folder), "/deny", f"{everyone}:(OI)(CI)(RD,X,RA,REA)", "/Q"],
-                       check=True, capture_output=True)
-    else:
-        folder.chmod(0)
-    try:
-        yield
-    finally:
-        if os.name == "nt":
-            subprocess.run(["icacls", str(folder), "/remove:d", everyone, "/T", "/Q"], check=True, capture_output=True)
-        else:
-            folder.chmod(0o700)
 
 
 def test_hooks_status_does_not_fail_on_a_ledger_folder_this_user_may_not_look_into(tmp_path: Path, capsys) -> None:
@@ -1184,16 +1160,67 @@ def test_hooks_install_keeps_the_permissions_of_the_guard_file(tmp_path: Path, c
     assert guard.stat().st_mode & 0o777 == 0o600
 
 
-@pytest.mark.parametrize("unusable", [7, " "], ids=["a-number", "blank"])
-def test_hooks_install_does_not_keep_a_ledger_entry_the_hooks_cannot_read(tmp_path: Path, capsys, unusable) -> None:
-    project, ledger = tmp_path / "app", tmp_path / "ledgers" / "app"
-    guard = write(project, ".dev-circuit/guard.json", json.dumps({"ledger": unusable, "deny": ["../notes"]}))
+@pytest.mark.parametrize("kind", UNREADABLE_GUARDS)
+def test_hooks_install_says_why_it_cannot_use_a_guard_file_and_rewrites_it_whole_only_when_given_the_ledger(
+        tmp_path: Path, capsys, kind: str) -> None:
+    # A file nested too deep was a traceback. One whose ledger is not a path got 缺少 --ledger：账本在项目之外…, which
+    # does not tell the human that the file is the problem; a NaN in it was kept, and written back as it was.
+    project, ledger, other = tmp_path / "app", tmp_path / "ledgers" / "app", tmp_path / "ledgers" / "other"
+    guard = write(project, ".dev-circuit/guard.json", "")
+    guard.write_bytes(unreadable_guard(kind, ledger))
+    before = guard.read_bytes()
+    install = ["hooks", "install", "--harness", "claude", "--project", str(project)]
+
+    assert cli.main(install) == 2
+    captured = capsys.readouterr()
+    assert f"{guard} 无法解析：{UNREADABLE_GUARDS[kind]}" in captured.err
+    assert "拦下全部工具调用" in captured.err and "由 human 修好" in captured.err and "带 --ledger" in captured.err
+    assert "缺少 --ledger" not in captured.err and "ledgers" not in captured.out + captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert guard.read_bytes() == before and not (project / ".dev-circuit" / "hooks").exists()  # nothing else done
+
+    assert cli.main([*install, "--ledger", str(other)]) == 0
+    captured = capsys.readouterr()
+    assert "整份改写" in captured.err and "ledgers" not in captured.out + captured.err
+    assert cli.ledger_module.read_guard(guard) == ({"ledger": str(other.resolve())}, "")
+
+
+@pytest.mark.parametrize("number", ["1e999", "1" * 4301], ids=["overflow", "integer-past-4300-digits"])
+def test_hooks_install_does_not_write_back_a_number_the_hooks_could_not_read(tmp_path: Path, capsys,
+                                                                            number: str) -> None:
+    """1e999 reads as infinity, which json.dumps writes as Infinity: a file both hooks read, turned into one they block on."""
+    project, ledgers = tmp_path / "app", tmp_path / "ledgers"
+    guard = write(project, ".dev-circuit/guard.json",
+                  json.dumps({"ledger": str(ledgers / "app")})[:-1] + f', "x": {number}}}')
+    before = guard.read_bytes()
     install = ["hooks", "install", "--harness", "pi", "--project", str(project)]
 
-    assert cli.main(install) == 2  # it passed, and status then showed the 7 as the ledger
-    assert "缺少 --ledger" in capsys.readouterr().err
-    assert cli.main([*install, "--ledger", str(ledger)]) == 0
-    assert json.loads(guard.read_text(encoding="utf-8")) == {"ledger": str(ledger.resolve()), "deny": ["../notes"]}
+    assert cli.main([*install, "--ledger", str(ledgers / "other")]) == 2
+    captured = capsys.readouterr()
+    assert "JSON 写不出的数" in captured.err and "human" in captured.err and "ledgers" not in captured.out + captured.err
+    assert guard.read_bytes() == before and not (project / ".pi").exists()  # neither the file nor the script
+
+    assert cli.main(install) == 0  # nothing to change: the file stays as it is, and both hooks read it
+    assert "沿用现有配置" in capsys.readouterr().out and guard.read_bytes() == before
+
+
+def test_hooks_install_does_not_write_back_a_character_utf8_cannot_hold(tmp_path: Path, capsys) -> None:
+    """A lone surrogate, written as the escape \\ud800, is JSON both hooks read; as UTF-8 it cannot be written at all."""
+    project, ledgers = tmp_path / "app", tmp_path / "ledgers"
+    guard = write(project, ".dev-circuit/guard.json",
+                  json.dumps({"ledger": str(ledgers / "app")})[:-1] + ', "note": "\\ud800"}')
+    before = guard.read_bytes()
+    install = ["hooks", "install", "--harness", "pi", "--project", str(project)]
+    assert cli.ledger_module.read_guard(guard)[1] == ""
+
+    assert cli.main([*install, "--ledger", str(ledgers / "other")]) == 2  # it was a traceback, UnicodeEncodeError
+    captured = capsys.readouterr()
+    assert "写不成 UTF-8 的字符" in captured.err and "human" in captured.err
+    assert "ledgers" not in captured.out + captured.err and "Traceback" not in captured.out + captured.err
+    assert guard.read_bytes() == before and not (project / ".pi").exists()  # neither the file nor the script
+
+    assert cli.main(install) == 0  # nothing to change: the file stays as it is
+    assert "沿用现有配置" in capsys.readouterr().out and guard.read_bytes() == before
 
 
 def test_hooks_install_does_not_ask_for_the_ledger_a_human_side_config_leaves_out(tmp_path: Path, capsys) -> None:
@@ -1210,10 +1237,13 @@ def test_hooks_install_does_not_ask_for_the_ledger_a_human_side_config_leaves_ou
     assert (project / ".pi" / "extensions" / "ledger-guard.js").is_file()
 
     # only that setup: a ledger the dev side writes still has to be named, and one the hooks cannot read is not kept
-    for unfinished in ({"deny": ["../notes"]}, {"ledger_side": "dev"}, {"ledger_side": "human", "ledger": 7}):
+    for unfinished in ({"deny": ["../notes"]}, {"ledger_side": "dev"}):
         guard.write_text(json.dumps(unfinished), encoding="utf-8")
         assert cli.main(install) == 2, unfinished
         assert "缺少 --ledger" in capsys.readouterr().err
+    guard.write_text(json.dumps({"ledger_side": "human", "ledger": 7}), encoding="utf-8")
+    assert cli.main(install) == 2
+    assert "无法解析：ledger 应该是非空的路径字符串" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("harness", sorted(cli.HOOKS))
@@ -1574,11 +1604,13 @@ def test_hooks_install_points_the_claude_snippet_at_local_settings(tmp_path: Pat
     assert ".claude/settings.local.json" in out and "worktree" not in out  # a project of its own is not called one
 
 
-@pytest.mark.parametrize("folder, character", [("a$HOME b", "$"), ("100%OS% x", "%")])
+@pytest.mark.parametrize("folder, character, expands", [("a$HOME b", "$", True), ("100%OS% x", "%", os.name == "nt")],
+                         ids=["dollar", "percent"])
 def test_hooks_say_when_a_shell_would_expand_the_script_path(tmp_path: Path, capsys, folder: str,
-                                                             character: str) -> None:
-    """The Claude command holds the script path in double quotes: sh, bash and PowerShell expand $NAME there, cmd
-    expands %NAME%; the launcher then finds no script and lets every call through. Installed must not pass for guarded."""
+                                                             character: str, expands: bool) -> None:
+    """The Claude command holds the script path in double quotes: sh, bash, zsh and PowerShell expand $NAME there,
+    cmd expands %NAME%, and only Windows has cmd. The launcher then finds no script and lets every call through.
+    Installed must not pass for guarded; a path that is not rewritten must not be called unguarded either."""
     project = tmp_path / folder / "app"
     ledger = tmp_path / "ledgers" / "app"
     project.mkdir(parents=True)
@@ -1587,15 +1619,26 @@ def test_hooks_say_when_a_shell_would_expand_the_script_path(tmp_path: Path, cap
     assert cli.main(["hooks", "install", "--harness", "claude",
                      "--project", str(project), "--ledger", str(ledger)]) == 0
     warned = capsys.readouterr().err
-    assert "展开" in warned and "不拦" in warned and f"（{character}）" in warned
-    assert str(ledger) not in warned
+    assert ("展开" in warned) == expands and str(ledger) not in warned
+    assert not expands or ("不拦" in warned and f"（{character}）" in warned)
 
     assert cli.main(["hooks", "status", "--project", str(project)]) == 0
     status = capsys.readouterr().out
-    assert "展开" in status and f"（{character}）" in status
+    assert ("展开" in status) == expands
+    assert not expands or f"（{character}）" in status
 
     assert cli.main(["hooks", "install", "--harness", "pi", "--project", str(project)]) == 0  # pi runs no shell command
     assert "展开" not in capsys.readouterr().err
+
+
+def test_a_percent_sign_counts_only_where_cmd_may_run_the_command(monkeypatch) -> None:
+    """On Linux and macOS the hook command goes through sh, bash or zsh, and pwsh leaves %NAME% alone as well."""
+    hook = Path("/srv", "100%OS% $x", "ledger_guard.py")
+
+    for windows, expected in ((True, "$%"), (False, "$")):
+        monkeypatch.setattr(cli, "IS_WINDOWS", windows)
+        assert cli.shell_expands(hook) == expected, windows
+    assert "% 只在 Windows 的 cmd 下" in cli._expands_note(hook, "%")
 
 
 def test_hooks_do_not_warn_about_a_path_no_shell_expands(tmp_path: Path, capsys) -> None:
