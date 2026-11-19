@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ledger-guard — Claude Code PreToolUse hook (dev-circuit-ultra)
 
-Blocks tool calls that name the private ledger or the guard config itself.
+Blocks tool calls whose arguments name the private ledger or the guard config
+itself.
 
 Install with `devcircuit hooks install --harness claude --project <project>`: it
 copies this file to <project>/.dev-circuit/hooks/ledger_guard.py and writes the
@@ -10,31 +11,90 @@ fragment rather than a plain `python ledger_guard.py`: python exits 2 when it
 cannot open the script, and Claude Code would then block every tool call on a
 branch without this file.
 
-Config, found by walking up from the hook's working directory:
+Config:
   <project>/.dev-circuit/guard.json
-  {"ledger": "D:\\\\ledgers\\\\my-app", "deny": ["../notes"], "allow": []}
+  {"ledger": "D:\\\\ledgers\\\\my-app", "deny": ["../notes"]}
+
+Where it is looked for: going up from the session's working directory (`cwd` in
+the hook input), each folder is asked twice before the next one up.
+  1. <folder>/.dev-circuit/guard.json
+  2. When <folder> is the top of a linked git worktree (`.git` there is a file
+     whose first line is `gitdir: G`, and G/commondir exists): the same file in
+     the main working tree, the parent of the git dir that commondir names.
+     guard.json is gitignored, so a worktree has no copy of its own. Only those
+     two files are read; git is not run.
+The first hit wins. `devcircuit ledger` asks the same two questions, of the
+`--project` folder only. A submodule, a --separate-git-dir repository and a
+worktree of a bare repository have no main working tree to fall back to.
+Because the first hit wins, <folder>/.dev-circuit/guard.json of every folder
+asked on the way (the worktree that uses the main tree's file, a subfolder the
+session sits in) is blocked like the guard.json in use: written there by the
+agent, it would be the boundary from the next call on.
+
+Relative `ledger` and `deny` entries start at the folder that holds
+`.dev-circuit` (in case 2, the main working tree). A relative path in a tool
+call starts at the folder that answered (in case 2, the worktree).
+
+How it is read, here and in the pi hook: as UTF-8 with a leading BOM dropped,
+holding a JSON object. `ledger` may be left out; written, it has to be a
+non-empty string. `deny` is a list of strings; anything else in its place or
+among its entries is skipped. Then:
+  - no guard.json found: the project has no ledger boundary, nothing is blocked;
+  - guard.json says where the ledger is, or leaves it out: calls that name the
+    ledger, a `deny` entry or guard.json are blocked;
+  - guard.json does not say where the ledger is (it is not UTF-8, does not
+    parse, is not an object, or `ledger` is not a non-empty string): every call
+    is blocked until a human repairs the file. The boundary cannot be told, and
+    the agent cannot fix a file it must not read.
 
 Exit codes follow the Claude Code hook contract: 0 = allow, 2 = block with the
 reason on stderr, 1 = non-blocking error. Pass --json to answer with a
 permissionDecision payload instead of exit 2.
 
-What this guarantees: the agent cannot reach the ledger through a tool call.
-What it does not: the dev process can still walk the filesystem as the same OS
-user. For a filesystem-level guarantee use docker/ or a separate OS user.
+What it does: blocks a call whose arguments name the ledger, a `deny` entry or
+guard.json in a spelling it can recognise: the path as written (either slash;
+on Windows any case, with or without the \\\\?\\ prefix, and the /c/…,
+/cygdrive/c/… and /mnt/c/… spellings of a drive), or a token that resolves into
+it from the session root with links followed. What it is not: filesystem
+isolation. The dev process runs as the same OS user, so a path put together at
+run time, a relative path after a `cd`, or a walk of the filesystem goes past
+it. For a filesystem-level guarantee use docker/ or a separate OS user;
+hooks/README.md lists what the hook misses.
 """
 
 import json
 import os
 import re
 import sys
+from itertools import islice
 from pathlib import Path
 
+# Raised with every change to this script, together with the pi hook's. `devcircuit hooks` reads the line
+# as text to tell whether the copy installed in a project is older or newer than the one it would install.
+VERSION = "0.2.0"
 CONFIG_DIR = ".dev-circuit"
 CONFIG_NAME = "guard.json"
 IS_WINDOWS = os.name == "nt"
 MAX_DEPTH = 8
 MAX_TOKENS = 64
 TOKEN_SPLIT = re.compile(r"""[\s"'`;|&<>(){}\[\],]+""")
+QUOTED = (re.compile(r'"([^"]+)"'), re.compile(r"'([^']+)'"))
+POSIX_DRIVE = re.compile(r"^/(?:cygdrive/|mnt/)?([A-Za-z])(?=/|$)")
+# Fixed words: a parser's message can quote the file, and the file names the ledger.
+BROKEN = ("账本边界：{config} 读不出来（它应该是 UTF-8 的 JSON 对象；写了 ledger 的话，得是非空的路径字符串），"
+          "账本在哪里无法判断，所以拦下全部工具调用。这个文件 agent 读不了也修不了：停下来告诉 human，"
+          "由 human 修好它，或重新运行 devcircuit hooks install；不要换路径、换工具重试。")
+
+
+def unprefixed(path: str) -> str:
+    """`C:\\a` for `\\\\?\\C:\\a` and `\\\\host\\share` for `\\\\?\\UNC\\host\\share`: the same folder either way.
+
+    abspath and realpath leave Windows' extended-length prefix on a path that came with it, so a ledger
+    written one way matched no path written the other way.
+    """
+    if not (IS_WINDOWS and path.startswith("\\\\?\\")):
+        return path
+    return "\\\\" + path[8:] if path[4:8].upper() == "UNC\\" else path[4:]
 
 
 def normalize(value: str) -> str:
@@ -43,57 +103,137 @@ def normalize(value: str) -> str:
         return ""
     if text == "~" or text.startswith(("~/", "~\\")):
         text = str(Path.home() / text[1:].lstrip("/\\"))
-    normalized = os.path.normpath(os.path.abspath(text))
+    normalized = unprefixed(os.path.normpath(os.path.abspath(text)))
     return normalized.lower() if IS_WINDOWS else normalized
 
 
 def normalize_real(value: str) -> str:
     """Absolute, symlink-resolved, case-folded on Windows. Empty when unusable."""
     try:
-        resolved = os.path.realpath(os.path.abspath(os.path.expanduser(value)))
+        resolved = unprefixed(os.path.realpath(os.path.abspath(os.path.expanduser(value))))
     except (OSError, ValueError):
         return ""
     return resolved.lower() if IS_WINDOWS else resolved
 
 
-def find_config(start: str | None) -> tuple[Path, Path] | None:
-    """Return (config path, project root) by walking up from `start`."""
-    directory = Path(os.path.abspath(start or os.getcwd()))
-    for candidate_dir in [directory, *directory.parents]:
-        candidate = candidate_dir / CONFIG_DIR / CONFIG_NAME
-        if candidate.is_file():
-            return candidate, candidate_dir
+def posix_spelling(path: str) -> str | None:
+    """`/c/a/b` for a normalized `c:\\a\\b`, as Git Bash writes it; None off Windows or without a drive.
+
+    Cygwin's /cygdrive/c/a/b and WSL's /mnt/c/a/b contain it, so matching it as text covers all three.
+    """
+    if IS_WINDOWS and len(path) > 2 and path[1] == ":" and path[0].isalpha():
+        return "/" + path[0] + path[2:].replace("\\", "/")
     return None
+
+
+def drive_spelling(text: str) -> str | None:
+    """`c:/a/b` for a `/c/a/b`, `/cygdrive/c/a/b` or `/mnt/c/a/b`, so that it can be resolved; else None."""
+    match = POSIX_DRIVE.match(text) if IS_WINDOWS else None
+    return f"{match.group(1)}:{text[match.end():] or '/'}" if match else None
+
+
+def main_tree(top: Path) -> Path | None:
+    """The main working tree when `top` is the top of a linked git worktree, else None.
+
+    Read from git's own files, not by running git: the hook runs before every tool call. `.git` there is
+    a file naming the worktree's git dir, and `commondir` in that dir leads to the repository's. A
+    submodule and a --separate-git-dir repository have the file without the `commondir`.
+    """
+    try:
+        pointer = top / ".git"
+        if not pointer.is_file():
+            return None
+        with open(pointer, encoding="utf-8", errors="replace") as handle:
+            first = handle.readline(4096)
+        target = first[len("gitdir:"):].strip() if first.startswith("gitdir:") else ""
+        if not target:
+            return None
+        git_dir = os.path.join(top, target)  # a relative one (git worktree add --relative-paths) starts at `top`
+        with open(os.path.join(git_dir, "commondir"), encoding="utf-8", errors="replace") as handle:
+            common = handle.read(4096).strip()
+    except (OSError, ValueError):
+        return None
+    return Path(os.path.normpath(os.path.join(git_dir, common))).parent if common else None
+
+
+def folders_up(start: str | None) -> list[Path]:
+    """The folder a session works in, then every folder above it."""
+    directory = Path(os.path.abspath(start or os.getcwd()))
+    return [directory, *directory.parents]
+
+
+def find_config(start: str | None) -> tuple[Path, Path, Path] | None:
+    """Return (guard.json, config root, session root), going up from `start`.
+
+    Each folder is asked twice before the next one up: its own guard.json, then, when it is the top of a
+    linked git worktree, the main working tree's (guard.json is gitignored, so a worktree has no copy of
+    it). `devcircuit ledger` asks the same two questions of the folder it is given. The config root is
+    where relative `ledger` and `deny` entries start; the session root, the folder that answered, is where
+    a relative path in a tool call starts.
+    """
+    for folder in folders_up(start):
+        own = folder / CONFIG_DIR / CONFIG_NAME
+        if own.is_file():
+            return own, folder, folder
+        main = main_tree(folder)
+        if main and (main / CONFIG_DIR / CONFIG_NAME).is_file():
+            return main / CONFIG_DIR / CONFIG_NAME, main, folder
+    return None
+
+
+def read_config(config_path: Path) -> tuple[str | None, list[str]] | None:
+    """(ledger, deny) as guard.json gives them; None when it does not say where the ledger is.
+
+    The pi hook reads the file the same way: UTF-8 with a leading BOM dropped, holding a JSON object.
+    `ledger` may be left out ({"ledger_side": "human"} alone is a valid file); when it is there it has to
+    be a non-empty string. `deny` only widens the boundary, so a `deny` that is not a list, or an entry in
+    it that is not a path, is skipped rather than taking the ledger's protection down with it.
+    """
+    try:
+        raw = json.loads(config_path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    ledger = raw.get("ledger")
+    if "ledger" in raw and not (isinstance(ledger, str) and ledger.strip()):
+        return None
+    deny = raw.get("deny") if isinstance(raw.get("deny"), list) else []
+    return ledger, [entry for entry in deny if isinstance(entry, str) and entry.strip()]
 
 
 def load_guard(start: str | None) -> dict | None:
     found = find_config(start)
     if not found:
         return None
-    config_path, project_root = found
-    denied = {normalize(str(config_path))}
-    denied_real = {normalize_real(str(config_path))}
-    raw_entries: list[str] = []
-    problem = None
-    try:
-        raw = json.loads(config_path.read_text(encoding="utf-8-sig"))
-        entries = [raw.get("ledger"), *(raw.get("deny") or [])]
-        for entry in entries:
-            if not isinstance(entry, str) or not entry.strip():
-                continue
-            absolute = entry if os.path.isabs(entry) or entry.startswith("~") \
-                else str(project_root / entry)
-            denied.add(normalize(absolute))
-            resolved = normalize_real(absolute)
-            if resolved:
-                denied_real.add(resolved)
-            raw_entries.append(entry)
-    except (OSError, ValueError, AttributeError) as error:
-        problem = str(error)
-    denied_real.discard("")
-    return {"config": str(config_path), "root": str(project_root),
-            "denied": denied, "denied_real": denied_real,
-            "raw": raw_entries, "problem": problem}
+    config_path, config_root, session_root = found
+    # The first guard.json on the way up wins, so the places asked before the one that answered are kept
+    # with it. Nothing is there yet (a worktree that borrows the main tree's file, a subfolder the session
+    # sits in), and a guard.json written there would be the whole boundary from the next call on.
+    guard_files = [config_path]
+    for folder in folders_up(start):
+        guard_files.append(folder / CONFIG_DIR / CONFIG_NAME)
+        if folder == session_root:
+            break
+    guard = {"config": str(config_path), "root": str(config_root), "base": str(session_root),
+             "broken": False, "ledger": False, "places": 1,
+             "denied": {normalize(str(path)) for path in guard_files},
+             "denied_real": {normalize_real(str(path)) for path in guard_files}}
+    read = read_config(config_path)
+    if read is None:
+        guard["broken"] = True
+        return guard
+    ledger, deny = read
+    entries = ([ledger] if ledger else []) + deny
+    for entry in entries:
+        absolute = entry if os.path.isabs(entry) or entry.startswith("~") else str(config_root / entry)
+        guard["denied"].add(normalize(absolute))
+        guard["denied_real"].add(normalize_real(absolute))
+    guard["denied_real"].discard("")
+    guard["denied"].update(filter(None, map(posix_spelling, list(guard["denied"]))))
+    guard["ledger"] = bool(ledger)
+    guard["places"] += len(entries)
+    return guard
 
 
 def collect_strings(value, out: list[str], depth: int = 0) -> list[str]:
@@ -129,22 +269,30 @@ def escapes(text: str, denied) -> bool:
     return False
 
 
-def candidate_texts(text: str):
-    """The whole string, its unquoted form, and shell-ish tokens."""
-    seen = {text}
-    yield text
-    for variant in (text.strip().strip("\"'"),):
-        if variant and variant not in seen:
-            seen.add(variant)
-            yield variant
-    for token in TOKEN_SPLIT.split(text)[:MAX_TOKENS]:
-        if token and token not in seen:
-            seen.add(token)
-            yield token
+def candidate_texts(text: str, seen: set):
+    """The whole string, its unquoted form, and shell-ish tokens: those not in `seen`, which holds what this
+    call has judged already (the raw JSON repeats every string, and a token is judged the same wherever it is).
+
+    A path with a space in it is no single token, so two more readings: what a pair of quotes holds, and
+    a token with `\\ ` (how a POSIX shell escapes a space) read as a space.
+    """
+    def new(items):
+        for item in items:
+            if item and item not in seen:
+                seen.add(item)
+                yield item
+
+    yield from new([text, text.strip().strip("\"'")])
+    yield from new(TOKEN_SPLIT.split(text)[:MAX_TOKENS])
+    for quoted in QUOTED:
+        yield from new(match.group(1) for match in islice(quoted.finditer(text), MAX_TOKENS))
+    if "\\ " in text:
+        tokens = TOKEN_SPLIT.split(text.replace("\\ ", "\0"))[:MAX_TOKENS]
+        yield from new(token.replace("\0", " ") for token in tokens if "\0" in token)
 
 
 def resolve_against(root: str, value: str) -> str:
-    """Resolve a maybe-relative path against the project root."""
+    """Resolve a maybe-relative path against the session root."""
     expanded = os.path.expanduser(value)
     if not os.path.isabs(expanded):
         expanded = os.path.join(root, expanded)
@@ -157,21 +305,21 @@ def inside(path: str, roots) -> bool:
 
 def violation(payload: dict) -> str | None:
     guard = load_guard(payload.get("cwd"))
-    if not guard or not guard["denied"]:
+    if not guard:
         return None
-    if guard["problem"]:
-        return None
+    if guard["broken"]:
+        return BROKEN.format(config=guard["config"])
     texts = collect_strings(payload.get("tool_input") or {}, [])
     texts.append(json.dumps(payload.get("tool_input") or {}, ensure_ascii=False))
     tool = payload.get("tool_name") or "tool"
+    seen = set()
     for text in texts:
         if not isinstance(text, str) or len(text) < 3:
             continue
-        for candidate in candidate_texts(text):
-            hit = escapes(candidate, guard["denied"])
-            if not hit:
-                resolved = resolve_against(guard["root"], candidate)
-                hit = bool(resolved) and inside(resolved, guard["denied_real"])
+        for candidate in candidate_texts(text, seen):
+            hit = escapes(candidate, guard["denied"]) or any(
+                inside(resolve_against(guard["base"], spelling), guard["denied_real"])
+                for spelling in (candidate, drive_spelling(candidate)) if spelling)
             if hit:
                 preview = candidate if len(candidate) <= 120 else candidate[:117] + "…"
                 return (f"账本边界：{tool} 试图访问项目外账本（{preview}）。"
@@ -183,7 +331,9 @@ def violation(payload: dict) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8")
+            # The reason quotes the call, and a call can hold half a surrogate pair (JSON's "\ud83d"), which
+            # UTF-8 has no bytes for: written as an escape, where a strict stream would raise and exit 1.
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, OSError):
             pass
     args = list(sys.argv[1:] if argv is None else argv)
@@ -198,15 +348,15 @@ def main(argv: list[str] | None = None) -> int:
         if not guard:
             print(f"未找到 {CONFIG_DIR}/{CONFIG_NAME}；ledger-guard 不会拦截任何调用。")
             return 0
+        # No ledger or deny path here: an agent can run this script, and those are what the hook keeps from it.
         print(f"配置：{guard['config']}")
-        print(f"项目根：{guard['root']}")
-        for entry in guard["raw"]:
-            print(f"账本：{entry}")
-        for target in sorted(guard["denied"]):
-            print(f"拒绝：{target}")
-        if guard["problem"]:
-            print(f"配置无法解析：{guard['problem']}")
+        if guard["broken"]:
+            print("配置读不出来：账本在哪里无法判断，ledger-guard 会拦下全部工具调用，直到 human 修好这个文件。")
             return 1
+        print(f"配置根：{guard['root']}")
+        print(f"会话根：{guard['base']}")
+        print(f"账本：{'已配置' if guard['ledger'] else '未配置'}")
+        print(f"拒绝：{guard['places']} 个位置（guard.json、账本和 deny 的每一项各算一个）")
         return 0
 
     try:
