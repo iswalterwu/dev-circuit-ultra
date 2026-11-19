@@ -1574,6 +1574,43 @@ def test_hooks_install_points_the_claude_snippet_at_local_settings(tmp_path: Pat
     assert ".claude/settings.local.json" in out and "worktree" not in out  # a project of its own is not called one
 
 
+@pytest.mark.parametrize("folder, character", [("a$HOME b", "$"), ("100%OS% x", "%")])
+def test_hooks_say_when_a_shell_would_expand_the_script_path(tmp_path: Path, capsys, folder: str,
+                                                             character: str) -> None:
+    """The Claude command holds the script path in double quotes: sh, bash and PowerShell expand $NAME there, cmd
+    expands %NAME%; the launcher then finds no script and lets every call through. Installed must not pass for guarded."""
+    project = tmp_path / folder / "app"
+    ledger = tmp_path / "ledgers" / "app"
+    project.mkdir(parents=True)
+    ledger.mkdir(parents=True)
+
+    assert cli.main(["hooks", "install", "--harness", "claude",
+                     "--project", str(project), "--ledger", str(ledger)]) == 0
+    warned = capsys.readouterr().err
+    assert "展开" in warned and "不拦" in warned and f"（{character}）" in warned
+    assert str(ledger) not in warned
+
+    assert cli.main(["hooks", "status", "--project", str(project)]) == 0
+    status = capsys.readouterr().out
+    assert "展开" in status and f"（{character}）" in status
+
+    assert cli.main(["hooks", "install", "--harness", "pi", "--project", str(project)]) == 0  # pi runs no shell command
+    assert "展开" not in capsys.readouterr().err
+
+
+def test_hooks_do_not_warn_about_a_path_no_shell_expands(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "app"                                # tmp_path already has a space and non-ASCII characters
+    ledger = tmp_path / "ledgers" / "app"
+    project.mkdir()
+    ledger.mkdir(parents=True)
+
+    assert cli.main(["hooks", "install", "--harness", "claude",
+                     "--project", str(project), "--ledger", str(ledger)]) == 0
+    assert "展开" not in capsys.readouterr().err
+    assert cli.main(["hooks", "status", "--project", str(project)]) == 0
+    assert "展开" not in capsys.readouterr().out
+
+
 def test_adopt_writes_the_repos_trunk_into_agents(tmp_path: Path, capsys) -> None:
     """The template says main; a repo adopted on develop must not get main as its default base."""
     repo = tmp_path / "repo"

@@ -98,6 +98,21 @@ def python_command() -> str:
     return candidates[0]
 
 
+def shell_expands(hook: Path) -> str:
+    """The characters of the script path a shell rewrites inside the double quotes of the Claude command, or "".
+
+    sh, bash and PowerShell expand $NAME and backticks there, cmd expands %NAME%. The path then names nothing,
+    the launcher takes the script for missing, and every call is let through: installed, and not guarding.
+    """
+    return "".join(character for character in "$%`\"" if character in Path(hook).as_posix())
+
+
+def _expands_note(hook: Path, characters: str) -> str:
+    return (f"{hook} 的路径里有 shell 会展开的字符（{characters}）：Claude 的 hook 命令把这个路径放在双引号里，"
+            "sh / bash / PowerShell 展开 $NAME 和反引号，cmd 展开 %NAME%；展开后路径对不上，命令当成脚本不在而放行，"
+            "账本边界在这里不拦。把项目放到不含这些字符的路径下。")
+
+
 def claude_snippet(hook: Path) -> str:
     """Build the .claude/settings.json fragment with proper JSON escaping."""
     command = f'{python_command()} -I -c "{HOOK_LAUNCHER}" "{Path(hook).as_posix()}"'
@@ -496,6 +511,9 @@ def _install_hooks(args) -> int:
         print("pi 会在可信项目里自动加载 .pi/extensions/*.js；/reload 生效。", file=out)
         print("如果已把 hook 装到 ~/.pi/agent/extensions/，删掉项目这份即可。", file=out)
     else:
+        expanded = shell_expands(destination)
+        if expanded:
+            print(f"警告：{_expands_note(destination, expanded)}", file=sys.stderr)
         snippet = claude_snippet(destination)
         snippet_path = project / CONFIG_DIR / "claude-settings.hook.json"
         snippet_path.write_text(snippet + "\n", encoding="utf-8")
@@ -637,6 +655,9 @@ def _hook_status(args) -> int:
             print(f"{harness}: 已安装（{script}），{compared}", file=out)
         else:
             print(f"{harness}: 未安装（{script}）", file=out)
+    claude_script = project / HOOKS["claude"][1]
+    if "claude" in present and shell_expands(claude_script):
+        print(f"提醒：{_expands_note(claude_script, shell_expands(claude_script))}", file=out)
 
     # A config found through the main tree is no use to a script that never looks there. The worktree's own copy
     # of the Claude script is not the one to judge by when its settings have Claude Code run another.
