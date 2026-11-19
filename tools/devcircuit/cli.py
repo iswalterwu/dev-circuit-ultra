@@ -388,12 +388,19 @@ def _ledger(args) -> int:
             if not committed:
                 print("提醒：记录已写入，但账本仓库没有提交成功；请人工检查账本仓库的 git 身份和状态。", file=out)
             return 0
-        findings, records, features = ledger_module.check(project, args.base)
+        findings, records, features, notes = ledger_module.check(project, args.base)
     except ledger_module.LedgerError as error:
         print(str(error), file=sys.stderr)
         return 2
+    except OSError as error:
+        # Only the reason: the message of an OSError names the file it failed on, and that may be the ledger's.
+        print(f"账本命令没做成：{ledger_module.why_failed(error)}（不显示出错的文件，免得带出账本路径；"
+              "请人工检查账本目录和权限）", file=sys.stderr)
+        return 2
     for finding in findings:
         print(finding.text, file=out)
+    for note in notes:  # what was not checked: said, but not counted, so the exit code stays what it was
+        print(f"说明：{note}", file=out)
     if findings:
         print(f"ledger check：{len(findings)} 处不一致", file=out)
         return 1

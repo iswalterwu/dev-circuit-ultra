@@ -45,8 +45,9 @@ def valid_feature(name: str) -> bool:
 
 
 def _git(root: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", input=stdin)
+    # core.quotepath=false, as in context and close: git would quote and octal-escape non-ASCII paths.
+    return subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(root), *args], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", input=stdin)
 
 
 def _home(project: Path) -> Path:
@@ -210,29 +211,122 @@ def add(project: Path, feature: str, kind: str, decision: str, rejected=(), reas
     record.update({"source": "dev-agent", "human_only": True})
 
     path = ledger / "entries" / name / f"{feature}.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as error:
+        raise LedgerError(f"账本记录写不进去（{why_failed(error)}）；请人工检查账本目录的权限和磁盘空间") from error
     relative = path.relative_to(ledger).as_posix()
-    committed = (_git(ledger, "add", relative).returncode == 0
-                 and _git(ledger, "commit", "-q", "-m", f"{name}/{feature} {kind} {record['id']}",
-                          "--", relative).returncode == 0)
-    return record["id"], committed
+    return record["id"], _commit(ledger, relative, f"{name}/{feature} {kind} {record['id']}")
+
+
+def why_failed(error: OSError) -> str:
+    """Why a file operation failed, without the path: the error names the file, and that may be the ledger's."""
+    return error.strerror or type(error).__name__
+
+
+def _commit(ledger: Path, relative: str, message: str) -> bool:
+    return (_git(ledger, "add", relative).returncode == 0
+            and _git(ledger, "commit", "-q", "-m", message, "--", relative).returncode == 0)
+
+
+def close_recorded(project: Path, feature: str, commit: str) -> bool:
+    """Whether the ledger has a close record of `feature` for the close that `commit` made. Yes or no only.
+
+    A rerun of `devcircuit close` asks this before it writes. A close record counts when it points at
+    `commit` or at a commit made on top of it, and when it was written after `commit` was made: a human who
+    saw close-missing may have recorded the close by hand since, from the trunk or from another clone, and
+    `ledger add` takes whatever HEAD is there. A record written before `commit` was made, pointing
+    elsewhere, does not count: it belongs to an earlier feature that used the name.
+    """
+    ledger, name = resolve(project)
+    closes = [record for record in _records(ledger, name)
+              if record.get("feature") == feature and record.get("kind") == "close"]
+    made = _git(project, "show", "-s", "--format=%ct", commit).stdout.strip()
+    if made.isdigit() and any(_written(record) > int(made) for record in closes):
+        return True
+    recorded = {record["commit"] for record in closes if isinstance(record.get("commit"), str)}
+    return any(_git(project, "merge-base", "--is-ancestor", commit, sha).returncode == 0
+               for sha in set(_resolve_commits(project, recorded).values()))
+
+
+def _written(record: dict) -> float:
+    """When a record was written, in seconds since the epoch; 0 when its `ts` is not the UTC time `add` writes."""
+    try:
+        return datetime.strptime(record.get("ts"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def settle(project: Path, feature: str) -> bool:
+    """Commit `feature`'s records when an earlier `add` wrote one that the ledger repository did not commit.
+
+    True when nothing is left uncommitted.
+    """
+    ledger, name = resolve(project)
+    relative = f"entries/{name}/{feature}.jsonl"
+    status = _git(ledger, "status", "--porcelain", "--", relative)
+    if status.returncode != 0:
+        return False
+    return not status.stdout.strip() or _commit(ledger, relative, f"{name}/{feature} close（补提交）")
 
 
 def _records(ledger: Path, name: str) -> list[dict]:
     records = []
-    for path in sorted((ledger / "entries" / name).glob("*.jsonl")):
-        for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-            if line.strip():
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(item, dict):
-                    item.setdefault("feature", path.stem)
-                    records.append(item)
+    try:
+        for path in sorted((ledger / "entries" / name).glob("*.jsonl")):
+            for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+                if line.strip():
+                    try:
+                        item = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(item, dict):
+                        item.setdefault("feature", path.stem)
+                        # Compared and used as keys from here on: a hand edit may have left a list there.
+                        for key in ("feature", "kind"):
+                            if not isinstance(item.get(key), (str, type(None))):
+                                item[key] = OMITTED
+                        records.append(item)
+    except OSError as error:
+        raise LedgerError(f"账本记录读不出来（{why_failed(error)}）；请人工检查账本目录的权限") from error
     return records
+
+
+# The shapes of what `check` prints from a record besides requirement IDs and feature names.
+RECORD_ID = re.compile(r"^[0-9TZ:-]{8,24}-[0-9A-Za-z]{1,16}$")  # <UTC time>-<short random>, as `add` writes it
+COMMIT_ID = re.compile(r"^[0-9A-Fa-f]{4,64}$")
+OMITTED = "（格式不对，已略）"
+
+
+def _shown(value, shape: re.Pattern) -> str:
+    """A record field as `check` may print it: itself when it has the shape of what it claims to be.
+
+    `add` validates what it writes, but a record edited by hand, or an old one, can hold a sentence where an
+    ID belongs, and printing that would hand ledger content to the dev side.
+    """
+    return value if isinstance(value, str) and shape.fullmatch(value) else OMITTED
+
+
+def _listed(value) -> list:
+    """A record's `ids` or `ids_removed` as a list, whatever a hand edit left there; None for what is not text."""
+    entries = value if isinstance(value, list) else [value] if value else []
+    return [entry if isinstance(entry, str) else None for entry in entries]
+
+
+def uncomparable(project: Path, compared: tuple[str, str] | None) -> str | None:
+    """Why the requirements this branch changed cannot be told from `compared` (context.merge_base), or None.
+
+    Without a base nothing is compared. With HEAD as the fork point the comparison runs and comes back
+    empty, which reads as "nothing changed" when it only means there is no branch to look at.
+    """
+    if not compared:
+        return "找不到可比的基线（用 --base 指定，或在 AGENTS.md 写一行主干）"
+    if compared[1] == _git(project, "rev-parse", "--verify", "--quiet", "HEAD").stdout.strip():
+        return (f"当前提交就是和基线 {compared[0]} 的分叉点（就在基线上，或者已经合并进去），"
+                "看不出这个分支改过哪些要求")
+    return None
 
 
 def _history(project: Path) -> list[tuple[str, str]]:
@@ -259,8 +353,11 @@ def _resolve_commits(project: Path, shas: set[str]) -> dict[str, str]:
     return resolved
 
 
-def check(project: Path, base: str | None = None) -> tuple[list[Finding], int, int]:
-    """Return (findings, record count, feature count). Findings name features, IDs and commits only."""
+def check(project: Path, base: str | None = None) -> tuple[list[Finding], int, int, list[str]]:
+    """Return (findings, record count, feature count, notes). Findings name features, IDs and commits only.
+
+    A note says what could not be checked and why. It is not a finding: the verdict stays what it is.
+    """
     ledger, name = resolve(project)
     records = _records(ledger, name)
     history = _history(project)
@@ -316,11 +413,13 @@ def check(project: Path, base: str | None = None) -> tuple[list[Finding], int, i
         sha = record.get("commit")
         if sha and feature in in_progress and full(record) is None \
                 and corrected_at.get(feature, -1) <= position:
+            number = _shown(record["id"], RECORD_ID) if "id" in record else "?"
+            commit = _shown(sha, COMMIT_ID)
             findings.append(Finding("commit-missing", feature,
-                                    f"[commit-missing] {feature}：记录 {record.get('id', '?')} "
-                                    f"指向的提交 {str(sha)[:7]} 不在仓库里"))
+                                    f"[commit-missing] {feature}：记录 {number} "
+                                    f"指向的提交 {commit if commit == OMITTED else commit[:7]} 不在仓库里"))
 
-    removed = {identifier for record in records for identifier in record.get("ids_removed") or []}
+    removed = {identifier for record in records for identifier in _listed(record.get("ids_removed")) if identifier}
 
     # Requirements this branch deleted need a record of the deletion.
     try:
@@ -333,18 +432,21 @@ def check(project: Path, base: str | None = None) -> tuple[list[Finding], int, i
             if identifier not in removed:
                 findings.append(Finding("removal-unrecorded", None,
                                         f"[removal-unrecorded] {identifier}：本分支删掉了这条要求，账本里没有删除记录"))
+    unknown = uncomparable(project, compared)
+    notes = [f"removal-unrecorded 没查这个分支删掉的要求：{unknown}"] if unknown else []
 
     # IDs recorded as current must still exist, for records on the history you are on.
     defined = {entry.id for capability in context.load_capabilities(project) for entry in capability.entries}
     for position, record in enumerate(records):
         if full(record) not in order or corrected_at.get(record["feature"], -1) > position:
             continue
-        for identifier in record.get("ids") or []:
+        for identifier in _listed(record.get("ids")):
             if identifier not in defined and identifier not in removed:
-                findings.append(Finding("id-stale", record["feature"],
-                                        f"[id-stale] {identifier}：{record['feature']} 的记录里的这条要求已经不在"
-                                        "能力规格里，也没有删除记录"))
+                feature = _shown(record["feature"], FEATURE)
+                findings.append(Finding("id-stale", feature,
+                                        f"[id-stale] {_shown(identifier, REQUIREMENT_ID)}：{feature} 的记录里的这条要求"
+                                        "已经不在能力规格里，也没有删除记录"))
 
     unique = {finding.text: finding for finding in findings}
     features = {record.get("feature") for record in records}
-    return [unique[text] for text in sorted(unique)], len(records), len(features)
+    return [unique[text] for text in sorted(unique)], len(records), len(features), notes
