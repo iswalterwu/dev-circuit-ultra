@@ -38,6 +38,13 @@ def _empty_git_config(tmp_path_factory) -> Path:
     return path
 
 
+@pytest.fixture(scope="session")
+def _empty_xdg_config(tmp_path_factory) -> Path:
+    """An empty XDG config home: git reads its ignore and attributes files from there when core.excludesFile
+    and core.attributesFile are not set, and an empty GIT_CONFIG_GLOBAL leaves them unset."""
+    return tmp_path_factory.mktemp("xdg-config")
+
+
 @functools.lru_cache(maxsize=None)  # the same PATH for every test; looking through it costs tens of milliseconds
 def _without_an_installed_devcircuit(search_path: str) -> str:
     """PATH without the folders that hold an installed `devcircuit`.
@@ -57,8 +64,9 @@ def _without_an_installed_devcircuit(search_path: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _git_identity(monkeypatch, _empty_git_config: Path):
+def _git_identity(monkeypatch, _empty_git_config: Path, _empty_xdg_config: Path):
     """Tests must not depend on the machine's git identity, git config or installed devcircuit."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(_empty_xdg_config))
     for variable in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         monkeypatch.setenv(variable, "dcu tests")
     for variable in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):

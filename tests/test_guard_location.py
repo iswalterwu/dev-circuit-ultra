@@ -67,8 +67,9 @@ class Layouts:
         self.ledgers: dict[Path, Path] = {}          # guard.json -> the ledger it names
         config = base / "gitconfig"
         config.write_text("", encoding="utf-8")
+        (base / "xdg-config").mkdir()
         # conftest sets these per test; the layouts are built once per module, before any test's fixtures.
-        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": str(config),
+        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": str(config), "XDG_CONFIG_HOME": str(base / "xdg-config"),
                     "GIT_AUTHOR_NAME": "dcu tests", "GIT_COMMITTER_NAME": "dcu tests",
                     "GIT_AUTHOR_EMAIL": "tests@example.invalid", "GIT_COMMITTER_EMAIL": "tests@example.invalid"}
         for variable in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR"):

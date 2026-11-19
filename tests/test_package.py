@@ -92,6 +92,15 @@ def test_skill_frontmatter_is_store_compatible():
     assert "disable-model-invocation" not in _frontmatter("dev-circuit-ultra")
 
 
+def test_the_machines_git_ignore_and_attributes_files_stay_out_of_the_tests(tmp_path: Path):
+    """Without core.excludesFile git still reads $XDG_CONFIG_HOME/git/ignore (or ~/.config/git/ignore): a pattern
+    there, such as one for .claude/settings.local.json, would make a test pass here and fail on CI."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for name in (".claude/settings.local.json", ".dev-circuit/guard.json", "scratch.tmp", "node_modules/x.js"):
+        ignored = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "-q", "--no-index", name])
+        assert ignored.returncode == 1, f"{name} is ignored by a git file of this machine"
+
+
 @pytest.mark.skipif(not os.environ.get("CI"), reason="only CI promises to have every optional tool")
 @pytest.mark.parametrize("tool", ["node", "npm", "pwsh", "sh"])
 def test_ci_has_the_tools_the_optional_tests_need(tool: str):
