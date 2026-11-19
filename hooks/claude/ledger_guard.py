@@ -23,9 +23,10 @@ the hook input), each folder is asked twice before the next one up.
      the main working tree, the parent of the git dir that commondir names.
      guard.json is gitignored, so a worktree has no copy of its own. Only those
      two files are read; git is not run.
-The first hit wins. `devcircuit ledger` asks the same two questions, of the
-`--project` folder only. A submodule, a --separate-git-dir repository and a
-worktree of a bare repository have no main working tree to fall back to.
+A place this user may not look into counts as no file there. The first hit
+wins. `devcircuit ledger` asks the same two questions, of the `--project`
+folder only. A submodule, a --separate-git-dir repository and a worktree of a
+bare repository have no main working tree to fall back to.
 Because the first hit wins, <folder>/.dev-circuit/guard.json of every folder
 asked on the way (the worktree that uses the main tree's file, a subfolder the
 session sits in) is blocked like the guard.json in use: written there by the
@@ -35,21 +36,25 @@ Relative `ledger` and `deny` entries start at the folder that holds
 `.dev-circuit` (in case 2, the main working tree). A relative path in a tool
 call starts at the folder that answered (in case 2, the worktree).
 
-How it is read, here and in the pi hook: as UTF-8 with a leading BOM dropped,
-holding a JSON object. `ledger` may be left out; written, it has to be a
-non-empty string. `deny` is a list of strings; anything else in its place or
-among its entries is skipped. Then:
+How it is read, here, in the pi hook and in devcircuit: as UTF-8 with a
+leading BOM dropped, holding a JSON object at most 64 `[` and `{` deep (strings
+left out of the count), with no NaN or Infinity in it. `ledger` may be left
+out; written, it has to be a non-empty string. `deny` is a list of strings;
+anything else in its place or among its entries is skipped. Then:
   - no guard.json found: the project has no ledger boundary, nothing is blocked;
   - guard.json says where the ledger is, or leaves it out: calls that name the
     ledger, a `deny` entry or guard.json are blocked;
-  - guard.json does not say where the ledger is (it is not UTF-8, does not
-    parse, is not an object, or `ledger` is not a non-empty string): every call
-    is blocked until a human repairs the file. The boundary cannot be told, and
-    the agent cannot fix a file it must not read.
+  - guard.json does not say where the ledger is (it cannot be opened, is not
+    UTF-8, is nested deeper, does not parse, is not an object, or `ledger` is
+    not a non-empty string): every call is blocked until a human repairs the
+    file. The boundary cannot be told, and the agent cannot fix a file it must
+    not read.
 
 Exit codes follow the Claude Code hook contract: 0 = allow, 2 = block with the
 reason on stderr, 1 = non-blocking error. Pass --json to answer with a
-permissionDecision payload instead of exit 2.
+permissionDecision payload instead of exit 2. Input that is no JSON is the
+non-blocking error; a call nested deeper than Python's json follows is valid
+JSON the agent shaped, and is blocked where a guard.json applies.
 
 What it does: blocks a call whose arguments name the ledger, a `deny` entry or
 guard.json in a spelling it can recognise: the path as written (either slash;
@@ -61,6 +66,11 @@ run time, a relative path after a `cd`, or a walk of the filesystem goes past
 it. For a filesystem-level guarantee use docker/ or a separate OS user;
 hooks/README.md lists what the hook misses.
 """
+
+# The hook command runs the first python3 on PATH, which can be older than devcircuit's 3.10 (3.9 on macOS and
+# Debian 11). Evaluated there, an annotation such as `str | None` stops the script as it loads, and a hook that
+# exits 1 lets every call through. Kept as text, the script runs on 3.8.
+from __future__ import annotations
 
 import json
 import os
@@ -76,6 +86,7 @@ CONFIG_DIR = ".dev-circuit"
 CONFIG_NAME = "guard.json"
 IS_WINDOWS = os.name == "nt"
 MAX_DEPTH = 8
+MAX_NESTING = 64  # levels of `[` and `{` in guard.json: far more than it needs, far fewer than any parser allows
 MAX_TOKENS = 64
 TOKEN_SPLIT = re.compile(r"""[\s"'`;|&<>(){}\[\],]+""")
 QUOTED = (re.compile(r'"([^"]+)"'), re.compile(r"'([^']+)'"))
@@ -84,6 +95,8 @@ POSIX_DRIVE = re.compile(r"^/(?:cygdrive/|mnt/)?([A-Za-z])(?=/|$)")
 BROKEN = ("账本边界：{config} 读不出来（它应该是 UTF-8 的 JSON 对象；写了 ledger 的话，得是非空的路径字符串），"
           "账本在哪里无法判断，所以拦下全部工具调用。这个文件 agent 读不了也修不了：停下来告诉 human，"
           "由 human 修好它，或重新运行 devcircuit hooks install；不要换路径、换工具重试。")
+TOO_DEEP = ("账本边界：这次工具调用的参数嵌套太深，ledger-guard 读不完，判断不了它是否碰到账本，所以拦下这一次。"
+            "把参数改浅再调用；不要换路径、换工具绕开，需要时停下来问 human。")
 
 
 def unprefixed(path: str) -> str:
@@ -132,6 +145,15 @@ def drive_spelling(text: str) -> str | None:
     return f"{match.group(1)}:{text[match.end():] or '/'}" if match else None
 
 
+def is_file(path: Path) -> bool:
+    """Whether `path` is a file; False where this user may not look, as in the pi hook.
+
+    Path.is_file() raises PermissionError there on Python 3.10 to 3.13 (3.14 answers False). Every folder on
+    the way up is asked, and a traceback is exit 1, which Claude Code takes for "let the call through".
+    """
+    return os.path.isfile(path)
+
+
 def main_tree(top: Path) -> Path | None:
     """The main working tree when `top` is the top of a linked git worktree, else None.
 
@@ -141,7 +163,7 @@ def main_tree(top: Path) -> Path | None:
     """
     try:
         pointer = top / ".git"
-        if not pointer.is_file():
+        if not is_file(pointer):
             return None
         with open(pointer, encoding="utf-8", errors="replace") as handle:
             first = handle.readline(4096)
@@ -173,25 +195,74 @@ def find_config(start: str | None) -> tuple[Path, Path, Path] | None:
     """
     for folder in folders_up(start):
         own = folder / CONFIG_DIR / CONFIG_NAME
-        if own.is_file():
+        if is_file(own):
             return own, folder, folder
         main = main_tree(folder)
-        if main and (main / CONFIG_DIR / CONFIG_NAME).is_file():
+        if main and is_file(main / CONFIG_DIR / CONFIG_NAME):
             return main / CONFIG_DIR / CONFIG_NAME, main, folder
     return None
+
+
+def too_deep(text: str) -> bool:
+    """Whether more than MAX_NESTING `[` and `{` are open at once anywhere in `text`, strings left out.
+
+    Counted before parsing, so that whether a file is read does not come down to a parser's recursion limit:
+    Python's json gives up somewhere past a thousand levels, by version and stack, and JSON.parse in the pi
+    hook does not. The pi hook counts the same way.
+    """
+    depth, in_string, escaped = 0, False, False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > MAX_NESTING:
+                return True
+        elif char in "]}":
+            depth -= 1
+    return False
+
+
+def not_json(constant: str):
+    """NaN, Infinity and -Infinity: no JSON. Python's json reads them; JSON.parse in the pi hook does not."""
+    raise ValueError(constant)
+
+
+def any_length(digits: str):
+    """An integer as long as it is written; JSON.parse reads one past a double's range as infinity.
+
+    int() refuses more than 4300 digits with a ValueError from 3.11 on, and from 3.8.14, 3.9.14 and 3.10.7, which
+    have it as a security fix: a valid file would be unreadable here and readable to the pi hook. The value itself
+    is never used.
+    """
+    try:
+        return int(digits)
+    except ValueError:
+        return float(digits)
 
 
 def read_config(config_path: Path) -> tuple[str | None, list[str]] | None:
     """(ledger, deny) as guard.json gives them; None when it does not say where the ledger is.
 
-    The pi hook reads the file the same way: UTF-8 with a leading BOM dropped, holding a JSON object.
-    `ledger` may be left out ({"ledger_side": "human"} alone is a valid file); when it is there it has to
-    be a non-empty string. `deny` only widens the boundary, so a `deny` that is not a list, or an entry in
-    it that is not a path, is skipped rather than taking the ledger's protection down with it.
+    One rule, here, in the pi hook and in devcircuit's ledger.read_guard: the bytes as strict UTF-8 with a
+    leading BOM dropped; no more than MAX_NESTING levels; JSON without NaN or Infinity; an object. `ledger` may
+    be left out ({"ledger_side": "human"} alone is a valid file); when it is there it has to be a string that
+    str.strip() leaves something of. `deny` only widens the boundary, so a `deny` that is not a list, or an
+    entry in it that is not a path, is skipped rather than taking the ledger's protection down with it.
     """
     try:
-        raw = json.loads(config_path.read_bytes().decode("utf-8-sig"))
-    except (OSError, ValueError, RecursionError):
+        text = config_path.read_bytes().decode("utf-8-sig")
+        if too_deep(text):
+            return None
+        raw = json.loads(text, parse_constant=not_json, parse_int=any_length)
+    except (OSError, ValueError):
         return None
     if not isinstance(raw, dict):
         return None
@@ -328,6 +399,37 @@ def violation(payload: dict) -> str | None:
     return None
 
 
+def cannot_follow(start: str | None) -> str | None:
+    """The answer to a call nested deeper than Python's json follows, read or written out: blocked where a
+    guard.json applies to `start`.
+
+    The JSON is valid and the tool input is the agent's to shape. json gives up some thousands of levels deep on
+    3.10 to 3.13 and some tens of thousands on 3.14, json.dumps sooner than json.loads, with a RecursionError: a
+    traceback would be exit 1, which lets the call through, ledger path and all.
+    """
+    guard = load_guard(start)
+    if not guard:
+        return None
+    return BROKEN.format(config=guard["config"]) if guard["broken"] else TOO_DEEP
+
+
+def answer(reason: str | None, use_json: bool) -> int:
+    """Let the call through without a reason; else block it: exit 2, or a deny decision with --json."""
+    if not reason:
+        return 0
+    if use_json:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }, ensure_ascii=False))
+        return 0
+    print(reason, file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -366,26 +468,19 @@ def main(argv: list[str] | None = None) -> int:
         # right after Chinese text, as in 账本：D:\ledgers, would no longer match.
         raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         payload = json.loads(raw) if raw.strip() else {}
+    except RecursionError:
+        return answer(cannot_follow(None), use_json)  # unread, the input names no folder: the one the hook runs in
     except (OSError, ValueError, AttributeError) as error:
         print(f"ledger-guard: 无法读取 hook 输入：{error}", file=sys.stderr)
         return 1
     if not isinstance(payload, dict):
         return 0
 
-    reason = violation(payload)
-    if not reason:
-        return 0
-    if use_json:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }, ensure_ascii=False))
-        return 0
-    print(reason, file=sys.stderr)
-    return 2
+    try:
+        reason = violation(payload)
+    except RecursionError:
+        reason = cannot_follow(payload.get("cwd"))
+    return answer(reason, use_json)
 
 
 if __name__ == "__main__":

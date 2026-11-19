@@ -24,9 +24,10 @@
  *      file in the main working tree, the parent of the git dir that commondir
  *      names. guard.json is gitignored, so a worktree has no copy of its own.
  *      Only those two files are read; git is not run.
- * The first hit wins. `devcircuit ledger` asks the same two questions, of the
- * `--project` folder only. A submodule, a --separate-git-dir repository and a
- * worktree of a bare repository have no main working tree to fall back to.
+ * A place this user may not look into counts as no file there. The first hit
+ * wins. `devcircuit ledger` asks the same two questions, of the `--project`
+ * folder only. A submodule, a --separate-git-dir repository and a worktree of
+ * a bare repository have no main working tree to fall back to.
  * Because the first hit wins, <folder>/.dev-circuit/guard.json of every folder
  * asked on the way (the worktree that uses the main tree's file, a subfolder
  * the session sits in) is blocked like the guard.json in use: written there by
@@ -36,18 +37,21 @@
  * `.dev-circuit` (in case 2, the main working tree). A relative path in a tool
  * call starts at the folder that answered (in case 2, the worktree).
  *
- * How it is read, here and in the Claude Code hook: as UTF-8 with a leading
- * BOM dropped, holding a JSON object. `ledger` may be left out; written, it
- * has to be a non-empty string. `deny` is a list of strings; anything else in
- * its place or among its entries is skipped. Then:
+ * How it is read, here, in the Claude Code hook and in devcircuit: as UTF-8
+ * with a leading BOM dropped, holding a JSON object at most 64 `[` and `{`
+ * deep (strings left out of the count), with no NaN or Infinity in it.
+ * `ledger` may be left out; written, it has to be a non-empty string. `deny`
+ * is a list of strings; anything else in its place or among its entries is
+ * skipped. Then:
  *   - no guard.json found: the project has no ledger boundary, nothing is
  *     blocked;
  *   - guard.json says where the ledger is, or leaves it out: calls that name
  *     the ledger, a `deny` entry or guard.json are blocked;
- *   - guard.json does not say where the ledger is (it is not UTF-8, does not
- *     parse, is not an object, or `ledger` is not a non-empty string): every
- *     call is blocked until a human repairs the file. The boundary cannot be
- *     told, and the agent cannot fix a file it must not read.
+ *   - guard.json does not say where the ledger is (it cannot be opened, is not
+ *     UTF-8, is nested deeper, does not parse, is not an object, or `ledger`
+ *     is not a non-empty string): every call is blocked until a human repairs
+ *     the file. The boundary cannot be told, and the agent cannot fix a file
+ *     it must not read.
  *
  * What it does: blocks a call whose arguments name the ledger, a `deny` entry
  * or guard.json in a spelling it can recognise: the path as written (either
@@ -73,13 +77,38 @@ const VERSION = "0.2.0";
 const CONFIG_DIR = ".dev-circuit";
 const CONFIG_NAME = "guard.json";
 const IS_WINDOWS = process.platform === "win32";
+// Levels of `[` and `{` in guard.json: far more than it needs, far fewer than
+// any parser's recursion limit.
+const MAX_NESTING = 64;
 const MAX_TOKENS = 64;
 const MAX_LINKS = 40; // as many as Linux follows in one path before it calls it a loop
 const TOKEN_SPLIT = /[\s"'`;|&<>(){}[\],]+/;
 const QUOTED = [/"([^"]+)"/g, /'([^']+)'/g];
 const POSIX_DRIVE = /^\/(?:cygdrive\/|mnt\/)?([A-Za-z])(?=\/|$)/;
+// What Python's str.isspace() calls space, so what str.strip() takes away:
+// the Claude Code hook and devcircuit go by that. trim() differs: it leaves
+// U+001C to U+001F and U+0085, and takes U+FEFF.
+const SPACE = /[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
 
 export const name = "ledger-guard";
+
+/**
+ * `text` without the space at its ends, as Python's str.strip() has it. A
+ * loop, not a regular expression: a pattern for trailing space goes back over
+ * every run of spaces inside a long tool input.
+ */
+function strip(text) {
+  let start = 0;
+  let end = text.length;
+  while (start < end && SPACE.test(text[start])) start += 1;
+  while (end > start && SPACE.test(text[end - 1])) end -= 1;
+  return text.slice(start, end);
+}
+
+/** Whether str.strip() leaves nothing of `text`. */
+function blank(text) {
+  return strip(text) === "";
+}
 
 /** Fixed words: a parser's message can quote the file, and the file names the ledger. */
 function brokenReason(configPath) {
@@ -100,7 +129,7 @@ function unprefixed(path) {
 }
 
 function normalizePath(value) {
-  let text = String(value).trim().replace(/^["']|["']$/g, "");
+  let text = strip(String(value)).replace(/^["']|["']$/g, "");
   if (!text) return "";
   if (text === "~" || text.startsWith("~/") || text.startsWith("~\\")) {
     text = join(homedir(), text.slice(1));
@@ -170,7 +199,7 @@ function pathResolver() {
     return join(once(real, path.slice(0, Math.max(start - 1, root)), realpath), path.slice(start));
   };
   return (base, value) => {
-    let text = String(value).trim().replace(/^["']|["']$/g, "");
+    let text = strip(String(value)).replace(/^["']|["']$/g, "");
     if (!text) return "";
     if (text === "~" || text.startsWith("~/") || text.startsWith("~\\")) {
       text = join(homedir(), text.slice(1));
@@ -218,11 +247,11 @@ function mainTree(top) {
     const pointer = join(top, ".git");
     if (!isFile(pointer)) return undefined;
     const first = readFileSync(pointer, "utf8").split("\n", 1)[0];
-    const target = first.startsWith("gitdir:") ? first.slice("gitdir:".length).trim() : "";
+    const target = first.startsWith("gitdir:") ? strip(first.slice("gitdir:".length)) : "";
     if (!target) return undefined;
     // a relative one (git worktree add --relative-paths) starts at `top`
     const gitDir = resolve(top, target);
-    const common = readFileSync(join(gitDir, "commondir"), "utf8").trim();
+    const common = strip(readFileSync(join(gitDir, "commondir"), "utf8"));
     return common ? dirname(resolve(gitDir, common)) : undefined;
   } catch {
     return undefined;
@@ -259,15 +288,47 @@ function findConfig(start) {
 }
 
 /**
+ * Whether more than MAX_NESTING `[` and `{` are open at once anywhere in
+ * `text`, strings left out.
+ *
+ * Counted before parsing, so that whether a file is read does not come down
+ * to a parser's recursion limit: JSON.parse reads hundreds of thousands of
+ * levels, Python's json in the Claude Code hook gives up past a thousand or
+ * so. The Claude Code hook counts the same way.
+ */
+function tooDeep(text) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "[" || char === "{") {
+      depth += 1;
+      if (depth > MAX_NESTING) return true;
+    } else if (char === "]" || char === "}") {
+      depth -= 1;
+    }
+  }
+  return false;
+}
+
+/**
  * { ledger, deny } as guard.json gives them; undefined when it does not say
  * where the ledger is.
  *
- * The Claude Code hook reads the file the same way: UTF-8 with a leading BOM
- * dropped, holding a JSON object. `ledger` may be left out ({"ledger_side":
- * "human"} alone is a valid file); when it is there it has to be a non-empty
- * string. `deny` only widens the boundary, so a `deny` that is not a list, or
- * an entry in it that is not a path, is skipped rather than taking the
- * ledger's protection down with it.
+ * One rule, here, in the Claude Code hook and in devcircuit's
+ * ledger.read_guard: the bytes as strict UTF-8 with a leading BOM dropped; no
+ * more than MAX_NESTING levels; JSON (JSON.parse has no NaN or Infinity); an
+ * object. `ledger` may be left out ({"ledger_side": "human"} alone is a valid
+ * file); when it is there it has to be a string that is not blank. `deny` only
+ * widens the boundary, so a `deny` that is not a list, or an entry in it that
+ * is not a path, is skipped rather than taking the ledger's protection down
+ * with it.
  */
 function readConfig(configPath) {
   let raw;
@@ -277,15 +338,17 @@ function readConfig(configPath) {
     // Node reads bytes that are not UTF-8 as U+FFFD and goes on, where Python
     // refuses the file: a ledger path saved in GBK would name another folder.
     if (!Buffer.from(text, "utf8").equals(bytes)) return undefined;
-    raw = JSON.parse(text.replace(/^\uFEFF/, ""));
+    const body = text.replace(/^\uFEFF/, "");
+    if (tooDeep(body)) return undefined;
+    raw = JSON.parse(body);
   } catch {
     return undefined;
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const ledger = raw.ledger;
-  if (ledger !== undefined && !(typeof ledger === "string" && ledger.trim())) return undefined;
+  if (ledger !== undefined && !(typeof ledger === "string" && !blank(ledger))) return undefined;
   const deny = Array.isArray(raw.deny) ? raw.deny : [];
-  return { ledger, deny: deny.filter((entry) => typeof entry === "string" && entry.trim()) };
+  return { ledger, deny: deny.filter((entry) => typeof entry === "string" && !blank(entry)) };
 }
 
 function loadGuard(start) {
@@ -359,7 +422,7 @@ function candidateTexts(text, seen) {
     }
   };
   add(text);
-  add(text.trim().replace(/^["']|["']$/g, ""));
+  add(strip(text).replace(/^["']|["']$/g, ""));
   for (const token of text.split(TOKEN_SPLIT).slice(0, MAX_TOKENS)) add(token);
   for (const quoted of QUOTED) {
     let count = 0;

@@ -1,20 +1,35 @@
 """The Claude Code hook is a subprocess contract: JSON in, exit code out."""
 
+import ast
+import builtins
 import contextlib
+import functools
+import importlib.util
+import inspect
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import tokenize
 from pathlib import Path
 
 import pytest
 
 HOOK = Path(__file__).resolve().parents[1] / "hooks" / "claude" / "ledger_guard.py"
-# guard.json contents from which the ledger's location cannot be told; built by unreadable_guard_file().
+# guard.json contents from which the ledger's location cannot be told; built by unreadable_guard_file(). The
+# Claude Code hook, the pi hook and devcircuit's ledger.read_guard share one rule for this, so the samples are
+# meant to be used for all three.
 UNREADABLE = ("truncated", "empty", "not json", "an array", "null", "a number", "deeply nested", "utf-16", "gbk",
-              "ledger is a number", "ledger is blank", "ledger is null")
+              "ledger is a number", "ledger is blank", "ledger is null", "ledger is blank to str.strip",
+              "ledger is U+001C", "ledger is U+0085", "NaN", "Infinity", "-Infinity", "nested 65 deep",
+              "nested 65 deep after a backslash")
+# Contents near those that are read all the same: the ledger is guarded and nothing else is blocked; built by
+# readable_guard_file().
+READABLE = ("brackets in strings", "nested 64 deep", "1e999", "a 5000-digit integer")
 
 
 def git(root: Path, *args: str) -> str:
@@ -48,6 +63,19 @@ def setup_project(tmp_path: Path) -> tuple[Path, Path]:
     return project, ledger
 
 
+def with_field(ledger: Path, value: str, before: str = "") -> bytes:
+    """A guard.json naming `ledger`, with `value` (JSON text) in a field of its own and `before` ahead of it."""
+    return f'{{"ledger": {json.dumps(str(ledger))}, {before}"x": {value}, "deny": []}}'.encode("utf-8")
+
+
+def nested(depth: int) -> str:
+    """JSON text `depth` levels deep, objects and arrays taking turns: both count."""
+    value = 0
+    for level in range(depth):
+        value = [value] if level % 2 else {"k": value}
+    return json.dumps(value)
+
+
 def unreadable_guard_file(sample: str, ledger: Path) -> bytes:
     good = json.dumps({"ledger": str(ledger)})
     return {
@@ -57,7 +85,7 @@ def unreadable_guard_file(sample: str, ledger: Path) -> bytes:
         "an array": json.dumps([str(ledger)]).encode("utf-8"),
         "null": b"null",                                      # an "object" to JavaScript's typeof
         "a number": b"5",
-        "deeply nested": b"[" * 200_000 + b"]" * 200_000,     # Python's parser gives up with a RecursionError
+        "deeply nested": b"[" * 200_000 + b"]" * 200_000,     # Python's parser gave up with a RecursionError
         "utf-16": good.encode("utf-16"),
         # What `echo {…} > guard.json` leaves in cmd on Chinese Windows. Read leniently it is still JSON, and
         # the ledger it names is a path with U+FFFD where the Chinese was: a folder that is not the ledger.
@@ -65,7 +93,47 @@ def unreadable_guard_file(sample: str, ledger: Path) -> bytes:
         "ledger is a number": b'{"ledger": 5}',
         "ledger is blank": b'{"ledger": " "}',
         "ledger is null": b'{"ledger": null}',
+        # blank is what Python's str.strip() takes away; JavaScript's trim() leaves U+001C to U+001F and U+0085
+        "ledger is blank to str.strip": b'{"ledger": "\\u001f"}',
+        "ledger is U+001C": b'{"ledger": "\\u001c"}',
+        "ledger is U+0085": b'{"ledger": "\\u0085"}',
+        # Python's json reads these three, JSON.parse does not: no JSON, so neither hook reads them
+        "NaN": with_field(ledger, "NaN"),
+        "Infinity": with_field(ledger, "Infinity"),
+        "-Infinity": with_field(ledger, "-Infinity"),
+        # One level past the limit of 64, the object itself counted. Both parsers would read it; the limit
+        # keeps either from deciding by its own recursion limit, which differs by parser and version.
+        "nested 65 deep": with_field(ledger, nested(64)),
+        # "C:\\" ends at its second quote: taken for an escaped quote, the string would swallow the nesting after it
+        "nested 65 deep after a backslash": with_field(ledger, nested(64), before='"drive": "C:\\\\", '),
     }[sample]
+
+
+def readable_guard_file(sample: str, ledger: Path) -> bytes:
+    return {
+        # brackets inside strings, behind escaped quotes too, are no nesting
+        "brackets in strings": json.dumps({"ledger": str(ledger), "notes": ["[" * 100],
+                                           "note": 'he wrote "' + "[" * 100 + '" and ' + "{" * 100}).encode("utf-8"),
+        "nested 64 deep": with_field(ledger, nested(63)),
+        # too large for a double: infinity to JSON.parse and to Python's float
+        "1e999": with_field(ledger, "1e999"),
+        # past Python's limit for turning digits into an int (4300 on 3.11, and on 3.8.14, 3.9.14 and 3.10.7 as a
+        # security fix); a double to JSON.parse
+        "a 5000-digit integer": with_field(ledger, "1" * 5000),
+    }[sample]
+
+
+def spaced_guard_file(project: Path, ledger: Path) -> tuple[bytes, list[tuple[Path, bool]]]:
+    """guard.json with `deny` entries where Python's str.strip() and JavaScript's trim() part ways, and paths a call
+    can name, each with whether both hooks block it: as str.strip() has it.
+
+    U+001F alone is blank, so skipped. U+FEFF is no space: a folder of that name, where trim() took it away and
+    left the project itself denied. "notes" and U+0085 is the folder notes, where trim() kept the U+0085.
+    """
+    text = json.dumps({"ledger": str(ledger), "deny": ["\u001f", "\ufeff", "notes\u0085"]}).encode("utf-8")
+    return text, [(ledger / "entries" / "x.md", True), (project / "src" / "app.py", False),
+                  (project / "\u001f" / "x.md", False), (project / "\ufeff" / "x.md", True),
+                  (project / "notes" / "a.md", True)]
 
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="drive letters and their spellings are a Windows matter")
@@ -144,12 +212,233 @@ def verdict(cwd: Path, tool_name: str, tool_input: dict) -> int:
     return run_hook({"cwd": str(cwd), "tool_name": tool_name, "tool_input": tool_input}).returncode
 
 
+@functools.lru_cache(maxsize=None)
+def hook_module():
+    """The script loaded in this process, for what a subprocess cannot show: a stub of the platform, an annotation."""
+    spec = importlib.util.spec_from_file_location("ledger_guard_under_test", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Names and modules that came after 3.8, of the kind a path-handling script reaches for.
+NEWER_NAMES = {"removeprefix", "removesuffix", "is_relative_to", "with_stem", "readlink", "is_junction", "isjunction",
+               "hardlink_to", "full_match", "pairwise", "batched", "bit_count"}
+NEWER_MODULES = {"zoneinfo", "graphlib", "tomllib"}
+BUILTIN_TYPES = {name for name, value in vars(builtins).items() if isinstance(value, type)}
+NO_CODE = {tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER}
+
+
+def newer_than_38(source: str) -> list[str]:
+    """What in `source` Python 3.8 cannot run, one line each; empty when there is nothing.
+
+    ast.parse(feature_version=(3, 8)) turns down match and a few later statements, and on 3.12 and later reads
+    the rest of the newer grammar without a word: parenthesized `with`, any expression as a decorator, `:=` in an
+    index or a set, `*` in an index, and f-strings that reuse their own quotes or hold a backslash or `#` in a
+    replacement field. The tree and the tokens are looked at for those. Of what fails only as it runs: `|` with a
+    type, None or a dict on one side, generics such as tuple[str, ...], zip(strict=), and the names above. `|`
+    between two variables that hold dicts cannot be seen here. Annotations are left out: the future import, which
+    the test asserts, keeps them text.
+    """
+    try:
+        tree = ast.parse(source, feature_version=(3, 8))
+    except SyntaxError as error:
+        return [f"{error.lineno}: {error.msg}"]
+    lines = io.StringIO(source).readlines()
+    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    code = [token for token in tokens if token.type not in NO_CODE]
+    starts = {token.start: index for index, token in enumerate(code)}
+    ends = {token.end: index for index, token in enumerate(code)}
+
+    def at(lineno: int, offset: int) -> tuple[int, int]:
+        """A tree position as tokenize gives it: ast counts the column in UTF-8 bytes, tokenize in characters."""
+        return lineno, len(lines[lineno - 1].encode("utf-8")[:offset].decode("utf-8"))
+
+    def token_before(node) -> str:
+        index = starts.get(at(node.lineno, node.col_offset))
+        return code[index - 1].string if index else ""
+
+    def token_after(node) -> str:
+        index = ends.get(at(node.end_lineno, node.end_col_offset))
+        return code[index + 1].string if index is not None and index + 1 < len(code) else ""
+
+    def first_token(node) -> str:
+        index = starts.get(at(node.lineno, node.col_offset))
+        return code[index].string if index is not None else ""
+
+    def joins_by_bar(node) -> bool:
+        """A type, None, a generic of a built-in type or a dict: what `|` joins from 3.9 or 3.10 on only."""
+        return (isinstance(node, ast.Constant) and node.value is None
+                or isinstance(node, ast.Name) and node.id in BUILTIN_TYPES
+                or isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in BUILTIN_TYPES
+                or isinstance(node, (ast.Dict, ast.DictComp))
+                or isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict")
+
+    annotations = set()
+    for node in ast.walk(tree):
+        for annotation in (getattr(node, "annotation", None), getattr(node, "returns", None)):
+            if isinstance(annotation, ast.AST):
+                annotations.update(map(id, ast.walk(annotation)))
+    found = []
+    for node in ast.walk(tree):
+        if id(node) in annotations:
+            continue
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            head = node.items[0].context_expr
+            if token_before(head) == "(" and token_after(head) != ")":
+                found.append(f"{node.lineno}: with (…) (3.9)")
+        for decorator in getattr(node, "decorator_list", ()):
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            while isinstance(target, ast.Attribute):
+                target = target.value
+            if not isinstance(target, ast.Name) or token_before(decorator) != "@":
+                found.append(f"{decorator.lineno}: a decorator that is no dotted name or call of one (3.9)")
+        if isinstance(node, ast.Subscript):
+            index = node.slice
+            parts = index.elts if isinstance(index, ast.Tuple) and first_token(index) != "(" else [index]
+            if any(isinstance(part, ast.Starred) for part in parts):
+                found.append(f"{node.lineno}: * in an index (3.11)")
+            if any(isinstance(part, ast.NamedExpr) and token_before(part) != "(" for part in parts):
+                found.append(f"{node.lineno}: := in an index (3.10)")
+            if isinstance(node.value, ast.Name) and node.value.id in BUILTIN_TYPES:
+                found.append(f"{node.lineno}: {node.value.id}[…] outside an annotation (3.9)")
+        if isinstance(node, (ast.Set, ast.SetComp)):
+            parts = node.elts if isinstance(node, ast.Set) else [node.elt]
+            if any(isinstance(part, ast.NamedExpr) and token_before(part) != "(" for part in parts):
+                found.append(f"{node.lineno}: := in a set (3.10)")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) and (
+                joins_by_bar(node.left) or joins_by_bar(node.right)) or (
+                isinstance(node, ast.AugAssign) and isinstance(node.op, ast.BitOr) and joins_by_bar(node.value)):
+            found.append(f"{node.lineno}: | of types or dicts (3.9, 3.10)")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "zip" and any(
+                keyword.arg == "strict" for keyword in node.keywords):
+            found.append(f"{node.lineno}: zip(strict=) (3.10)")
+        if isinstance(node, ast.Attribute) and node.attr in NEWER_NAMES:
+            found.append(f"{node.lineno}: .{node.attr}")
+        if isinstance(node, ast.ImportFrom) and (node.module in NEWER_MODULES
+                                                 or any(alias.name in NEWER_NAMES for alias in node.names)):
+            found.append(f"{node.lineno}: from {node.module} import")
+        if isinstance(node, ast.Import) and any(alias.name.split(".")[0] in NEWER_MODULES for alias in node.names):
+            found.append(f"{node.lineno}: import")
+    if sys.version_info >= (3, 12):
+        # Before 3.12 an f-string was first read as a plain string, then its replacement fields as code: one of
+        # its own quotes ended it, and a backslash or # in a field was an error. From 3.12 on, tokens show it.
+        strings = []                                            # [quotes, braces open] of each f-string a token is in
+        for token in tokens:
+            holding = [quotes for quotes, braces in strings if braces]   # the f-strings whose field holds the token
+            if token.type == tokenize.FSTRING_START:
+                quotes = token.string.lstrip("rRfFbBuU")
+                if any(outer in quotes for outer in holding):
+                    found.append(f"{token.start[0]}: an f-string in a field of one with the same quotes (3.12)")
+                strings.append([quotes, 0])
+            elif token.type == tokenize.FSTRING_END:
+                strings.pop()
+            elif token.type == tokenize.OP and token.string in "{}" and strings:
+                strings[-1][1] += 1 if token.string == "{" else -1
+            elif token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
+                # an f-string's own text, format specs included, is its own: what counts is the fields it is in
+                outer = holding if token.type == tokenize.STRING else [quotes for quotes, _ in strings[:-1]]
+                if outer and (any(quotes in token.string for quotes in outer) or {"\\", "#"} & set(token.string)):
+                    found.append(f"{token.start[0]}: a quote, backslash or # in an f-string's field (3.12)")
+            elif token.type == tokenize.COMMENT and holding:
+                found.append(f"{token.start[0]}: a comment in an f-string's field (3.12)")
+    return found
+
+
 def test_the_script_carries_a_version_on_a_line_of_its_own() -> None:
     # The CLI reads this line, without running the script, to tell an installed copy that is older or newer
     # than its own.
     lines = HOOK.read_text(encoding="utf-8").splitlines()
 
     assert [line for line in lines if re.fullmatch(r'VERSION = "\d+\.\d+\.\d+"', line)] == ['VERSION = "0.2.0"']
+
+
+def test_the_script_loads_on_an_older_python3() -> None:
+    # The hook command runs the first python3 on PATH, whatever its version: 3.9 from macOS's command line
+    # tools, 3.9 on Debian 11. There `str | None` in a signature raised a TypeError as the script loaded, the
+    # hook exited 1, and Claude Code let every call through.
+    source = HOOK.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    future = tree.body[1]                                                         # right after the docstring
+    assert isinstance(future, ast.ImportFrom) and future.module == "__future__"
+    assert [alias.name for alias in future.names] == ["annotations"]
+    module = hook_module()
+    functions = [value for value in vars(module).values()
+                 if inspect.isfunction(value) and value.__module__ == module.__name__]
+    assert functions and all(isinstance(annotation, str)                          # kept as text, never evaluated
+                             for function in functions for annotation in function.__annotations__.values())
+    assert newer_than_38(source) == []
+
+
+# What 3.8 cannot run, by the release that brought it. ast.parse(feature_version=(3, 8)) turns down match on every
+# version; on 3.12 and later it reads all the others without a word.
+NEWER_THAN_38 = (
+    ("3.9", "with (open(a) as b, open(c) as d):\n    pass\n"),
+    ("3.9", "with (open(a) as b):\n    pass\n"),
+    ("3.9", "@a[0].b\ndef f():\n    pass\n"),
+    ("3.9", "@(a)\ndef f():\n    pass\n"),
+    ("3.9", "@a.b()()\ndef f():\n    pass\n"),
+    ("3.9", "a = {} | b\n"),
+    ("3.9", "a |= dict(b)\n"),
+    ("3.9", "A = tuple[str, ...]\n"),
+    ("3.9", "a.removeprefix(b)\n"),
+    ("3.10", "a[b := 1]\n"),
+    ("3.10", "{a, b := 1}\n"),
+    ("3.10", "isinstance(a, str | bytes)\n"),
+    ("3.10", "a = b | None\n"),
+    ("3.10", "zip(a, b, strict=True)\n"),
+    ("3.10", "from itertools import pairwise\n"),
+    ("3.10", "match a:\n    case 1:\n        pass\n"),
+    ("3.11", "a[*b]\n"),
+    ("3.11", "a[1, *b]\n"),
+    ("3.11", "import tomllib\n"),
+    ("3.12", 'f"{"a"}"\n'),
+    ("3.12", "f\"{f'{\"a\"}'}\"\n"),
+    ("3.12", "f\"{'\\n'}\"\n"),
+    ("3.12", "f\"{'#'}\"\n"),
+    ("3.12", 'f"""{a  # note\n}"""\n'),
+)
+# Close to those, and fine on 3.8.
+FINE_ON_38 = (
+    "with open(a) as b, open(c) as d:\n    pass\n",
+    "with (a) as b, c:\n    pass\n",
+    "with (a, b) as c:\n    pass\n",
+    "@a.b(c)\ndef f():\n    pass\n",
+    "a[(b := 1)]\n",
+    "if a := b:\n    pass\n",
+    "a[(*b,)]\n",
+    "a[f(*b)]\n",
+    "a = b | c\n",
+    "f\"{'a'}\"\n",
+    'f"""{"a"}"""\n',
+    'f"{a:#x}"\n',
+    "from __future__ import annotations\ndef f(a: str | None) -> tuple[str, ...]:\n    b: list[int] = []\n",
+)
+
+
+@pytest.mark.parametrize(("release", "source"), NEWER_THAN_38)
+def test_the_check_for_older_pythons_sees_what_ast_parse_lets_through(release: str, source: str) -> None:
+    assert newer_than_38(source), release
+
+
+@pytest.mark.parametrize("source", FINE_ON_38)
+def test_the_check_for_older_pythons_leaves_what_they_run(source: str) -> None:
+    assert newer_than_38(source) == []
+
+
+OLDER_PYTHONS = tuple(filter(None, map(shutil.which, ("python3.8", "python3.9"))))
+
+
+@pytest.mark.skipif(not OLDER_PYTHONS, reason="no python3.8 or python3.9 on PATH")
+def test_the_hook_guards_on_an_older_python3(tmp_path: Path) -> None:
+    project, ledger = setup_project(tmp_path)
+    for python in OLDER_PYTHONS:
+        for file_path, code in ((ledger / "entries" / "x.md", 2), (project / "src" / "app.py", 0)):
+            payload = {"cwd": str(project), "tool_name": "Read", "tool_input": {"file_path": str(file_path)}}
+            result = subprocess.run([python, "-I", str(HOOK)], input=json.dumps(payload).encode("utf-8"),
+                                    capture_output=True, timeout=60)
+            assert result.returncode == code, (python, result.stderr)
 
 
 def test_the_script_does_not_promise_isolation() -> None:
@@ -421,6 +710,17 @@ def test_an_unreadable_guard_file_blocks_every_call(tmp_path: Path, sample: str)
         assert decision["permissionDecisionReason"] == said.strip()
 
 
+@pytest.mark.parametrize("sample", READABLE)
+def test_a_guard_file_near_an_unreadable_one_is_read(tmp_path: Path, sample: str) -> None:
+    # The pi hook reads these too: blocking every call on them here would leave the two hooks disagreeing again.
+    project, ledger = setup_project(tmp_path)
+    (project / ".dev-circuit" / "guard.json").write_bytes(readable_guard_file(sample, ledger))
+
+    assert verdict(project, "Read", {"file_path": str(ledger / "entries" / "x.md")}) == 2
+    assert verdict(project, "Read", {"file_path": str(project / "src" / "app.py")}) == 0
+    assert verdict(project, "Bash", {"command": "pytest -q"}) == 0
+
+
 def test_the_words_for_an_unreadable_guard_file_do_not_depend_on_what_is_wrong_with_it(tmp_path: Path) -> None:
     # What a parser says about a file can quote it, and this file names the ledger.
     project, ledger = setup_project(tmp_path)
@@ -474,6 +774,17 @@ def test_entries_of_deny_that_are_not_paths_are_skipped(tmp_path: Path) -> None:
     assert verdict(project, "Read", {"file_path": str(tmp_path / "notes" / "a.md")}) == 2
     assert verdict(project, "Read", {"file_path": str(tmp_path / "nested" / "a.md")}) == 0
     assert verdict(project, "Read", {"file_path": str(project / "src" / "app.py")}) == 0
+    assert verdict(project, "Bash", {"command": "pytest -q"}) == 0
+
+
+def test_space_around_an_entry_is_what_str_strip_takes_away(tmp_path: Path) -> None:
+    # The pi hook goes by the same rule; see spaced_guard_file().
+    project, ledger = setup_project(tmp_path)
+    text, calls = spaced_guard_file(project, ledger)
+    (project / ".dev-circuit" / "guard.json").write_bytes(text)
+
+    assert [verdict(project, "Read", {"file_path": str(path)}) == 2 for path, _ in calls] == [
+        expected for _, expected in calls]
     assert verdict(project, "Bash", {"command": "pytest -q"}) == 0
 
 
@@ -561,6 +872,80 @@ def test_bad_input_is_a_non_blocking_error(tmp_path: Path) -> None:
                             capture_output=True, timeout=60)
 
     assert result.returncode == 1
+
+
+def deep_call(cwd: Path, path: Path, depth: int) -> bytes:
+    """Hook input for a call that names `path` beside `depth` levels of nesting: valid JSON whatever the depth."""
+    return ('{"cwd": %s, "tool_name": "mcp__files__read", "tool_input": {"path": %s, "n": %s}}' % (
+        json.dumps(str(cwd)), json.dumps(str(path)), "[" * depth + "]" * depth)).encode("utf-8")
+
+
+def run_deep(call: bytes, cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(HOOK), *args], input=call, cwd=cwd, capture_output=True, timeout=60)
+
+
+def test_a_call_nested_deeper_than_python_reads_is_blocked(tmp_path: Path) -> None:
+    # The tool input is the agent's to shape. Python's json gives up some thousands of levels deep on 3.10 to
+    # 3.13, some tens of thousands on 3.14: a RecursionError, a traceback and exit 1, which let the call through
+    # with the ledger path beside the nesting.
+    project, ledger = setup_project(tmp_path)
+    call = deep_call(project, ledger / "entries" / "x.md", 200_000)
+
+    result = run_deep(call, project)
+
+    said = result.stderr.decode("utf-8")
+    assert result.returncode == 2, said
+    assert "账本边界" in said and "嵌套" in said and "Traceback" not in said and str(ledger) not in said
+    decision = json.loads(run_deep(call, project, "--json").stdout.decode("utf-8"))["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny" and decision["permissionDecisionReason"] == said.strip()
+    # Unread, the input names no folder: the one the hook runs in tells whether a boundary applies. None here.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    free = run_deep(deep_call(plain, plain / "x.md", 200_000), plain)
+    assert free.returncode == 0 and free.stderr == b""
+
+
+# How deep json.loads and json.dumps follow a nested list in a fresh interpreter: "<loads> <dumps>".
+HOW_DEEP = """
+import json
+
+def deepest(make):
+    low, high = 1, 1_000_000
+    while low < high:
+        middle = (low + high + 1) // 2
+        try:
+            make(middle)
+            low = middle
+        except RecursionError:
+            high = middle - 1
+    return low
+
+def nested(depth):
+    value = 0
+    for _ in range(depth):
+        value = [value]
+    return value
+
+print(deepest(lambda depth: json.loads("[" * depth + "]" * depth)), deepest(lambda depth: json.dumps(nested(depth))))
+"""
+
+
+def test_a_call_python_reads_but_cannot_write_out_is_blocked_too(tmp_path: Path) -> None:
+    # Once read, the tool input is written out as JSON text to be matched, and json.dumps can give up short of
+    # where json.loads did: on 3.14 for Windows, past some 15,500 of the 16,900 levels json.loads follows. That
+    # was the same traceback and exit 1.
+    probe = subprocess.run([sys.executable, "-I", "-c", HOW_DEEP], capture_output=True, text=True, encoding="utf-8",
+                           timeout=120)
+    reads, writes = map(int, probe.stdout.split())
+    if reads - writes < 100:
+        pytest.skip(f"json.dumps follows as deep as json.loads here ({writes} and {reads} levels)")
+    project, ledger = setup_project(tmp_path)
+
+    result = run_deep(deep_call(project, ledger / "entries" / "x.md", (reads + writes) // 2), project)
+
+    said = result.stderr.decode("utf-8")
+    assert result.returncode == 2, said
+    assert "嵌套" in said and "Traceback" not in said and str(ledger) not in said
 
 
 def test_blocks_relative_and_traversed_paths(tmp_path: Path) -> None:

@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from test_ledger_hook import HOOK as PYTHON_HOOK
-from test_ledger_hook import (LARGE_SOURCE, POSIX_SPELLINGS, UNREADABLE, WINDOWS_SPELLINGS, as_share, dangling_links,
-                              held_shut, link_to, linked_worktree, missing_drive, run_hook, spelled,
-                              unreadable_guard_file, windows_only)
+from test_ledger_hook import (LARGE_SOURCE, POSIX_SPELLINGS, READABLE, UNREADABLE, WINDOWS_SPELLINGS, as_share,
+                              dangling_links, held_shut, link_to, linked_worktree, missing_drive, readable_guard_file,
+                              run_hook, spaced_guard_file, spelled, unreadable_guard_file, windows_only)
 
 NODE = shutil.which("node")
 HOOK = Path(__file__).resolve().parents[1] / "hooks" / "pi" / "ledger-guard.js"
@@ -26,14 +26,33 @@ HOOK = Path(__file__).resolve().parents[1] / "hooks" / "pi" / "ledger-guard.js"
 pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
 
 HARNESS = """
-import { readFileSync } from "node:fs"
+import fs from "node:fs"
+import { syncBuiltinESMExports } from "node:module"
+import { sep } from "node:path"
 import { pathToFileURL } from "node:url"
-const [,, hookPath, sessionsPath] = process.argv
+const [,, hookPath, sessionsPath, hiddenPath] = process.argv
+if (hiddenPath) {
+  // Folders this user may not look into: whatever is in them answers EACCES. Swapped in before the hook loads,
+  // so that its own imports from node:fs are the stubs.
+  const hidden = JSON.parse(fs.readFileSync(hiddenPath, "utf8"))
+  const inside = (path) => typeof path === "string"
+    && hidden.some((folder) => path === folder || path.startsWith(folder + sep))
+  const refuse = (path) => Object.assign(new Error(`EACCES: permission denied, '${path}'`), { code: "EACCES" })
+  const guarded = (real) => (path, ...rest) => {
+    if (inside(path)) throw refuse(path)
+    return real(path, ...rest)
+  }
+  for (const name of ["statSync", "lstatSync", "readFileSync", "readlinkSync"]) fs[name] = guarded(fs[name])
+  const exists = fs.existsSync
+  fs.existsSync = (path) => !inside(path) && exists(path)
+  fs.realpathSync = Object.assign(guarded(fs.realpathSync), { native: guarded(fs.realpathSync.native) })
+  syncBuiltinESMExports()
+}
 const hook = await import(pathToFileURL(hookPath).href)
 const handlers = {}
 hook.default({ on: (name, fn) => { handlers[name] = fn } })
 const out = []
-for (const [cwd, cases] of JSON.parse(readFileSync(sessionsPath, "utf8"))) {
+for (const [cwd, cases] of JSON.parse(fs.readFileSync(sessionsPath, "utf8"))) {
   const notes = []
   const ctx = { cwd, ui: { notify: (message, level) => { notes.push([level, message]) } } }
   if (handlers.session_start) await handlers.session_start({}, ctx)
@@ -58,18 +77,23 @@ def setup_project(tmp_path: Path) -> tuple[Path, Path]:
     return project, ledger
 
 
-def run_sessions(scratch: Path, sessions: list) -> list[dict]:
+def run_sessions(scratch: Path, sessions: list, out_of_sight: tuple[Path, ...] = ()) -> list[dict]:
     """Start one pi session per (cwd, cases) in a single node process.
 
     Each answers {"results": one verdict per case, "notes": what the hook told the user}. The cases travel in
-    a file: a command line has a length limit and its own quoting rules.
+    a file: a command line has a length limit and its own quoting rules. In the folders `out_of_sight`, node:fs
+    refuses the hook with EACCES, as for a process without permission there.
     """
     harness = scratch / "harness.mjs"
     harness.write_text(HARNESS, encoding="utf-8")
     listed = scratch / "sessions.json"
     listed.write_text(json.dumps([[str(cwd), cases] for cwd, cases in sessions]), encoding="utf-8")
+    hidden = []
+    if out_of_sight:
+        hidden = [scratch / "hidden.json"]
+        hidden[0].write_text(json.dumps([str(folder) for folder in out_of_sight]), encoding="utf-8")
     result = subprocess.run(
-        [NODE, str(harness), str(HOOK), str(listed)],
+        [NODE, str(harness), str(HOOK), str(listed), *map(str, hidden)],
         capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert result.returncode == 0, result.stderr
@@ -340,6 +364,24 @@ def test_an_unreadable_guard_file_blocks_every_call(tmp_path: Path, sample: str)
         assert "LEAKMARK" not in reason and "JSON at" not in reason and str(ledger) not in reason
 
 
+@pytest.mark.parametrize("sample", READABLE)
+def test_a_guard_file_near_an_unreadable_one_is_read(tmp_path: Path, sample: str) -> None:
+    # The Claude Code hook reads these too: the nesting limit counts outside strings, a number too large for a
+    # double is infinity to both.
+    project, ledger = setup_project(tmp_path)
+    (project / ".dev-circuit" / "guard.json").write_bytes(readable_guard_file(sample, ledger))
+    cases = [
+        ["read", {"path": str(ledger / "entries" / "x.md")}],
+        ["read", {"path": str(project / "src" / "app.py")}],
+        ["bash", {"command": "pytest -q"}],
+    ]
+
+    session = run_sessions(tmp_path, [(project, cases)])[0]
+
+    assert [result is not None for result in session["results"]] == [True, False, False]
+    assert session["notes"] == []
+
+
 def test_the_words_for_an_unreadable_guard_file_are_the_claude_hooks(tmp_path: Path) -> None:
     # One text for both hooks, whatever is wrong with the file: what a parser says about it can quote it.
     project, ledger = setup_project(tmp_path)
@@ -396,6 +438,34 @@ def test_entries_of_deny_that_are_not_paths_are_skipped(tmp_path: Path) -> None:
     ]
 
     assert blocked(project, tmp_path, cases) == [True, True, False, False, False]
+
+
+def test_space_around_an_entry_is_what_str_strip_takes_away(tmp_path: Path) -> None:
+    # As the Claude Code hook has it; see spaced_guard_file(). trim() took a trailing U+FEFF away, and the deny
+    # entry "\ufeff" blocked every path in the project.
+    project, ledger = setup_project(tmp_path)
+    text, calls = spaced_guard_file(project, ledger)
+    (project / ".dev-circuit" / "guard.json").write_bytes(text)
+    cases = [["read", {"path": str(path)}] for path, _ in calls] + [["bash", {"command": "pytest -q"}]]
+
+    assert blocked(project, tmp_path, cases) == [expected for _, expected in calls] + [False]
+
+
+def test_space_is_what_python_calls_space(tmp_path: Path) -> None:
+    # The Claude Code hook and devcircuit go by str.strip(); JavaScript's trim() leaves U+001C to U+001F and
+    # U+0085, and takes U+FEFF. Every code point is put to the character class the script strips by.
+    source = HOOK.read_text(encoding="utf-8")
+    [space] = re.findall(r"^const SPACE = (/\[.*\]/);$", source, re.MULTILINE)
+    script = tmp_path / "space.mjs"
+    script.write_text(f"const SPACE = {space};\n" + (
+        "const out = [];\n"
+        "for (let code = 0; code < 0x110000; code++) if (SPACE.test(String.fromCodePoint(code))) out.push(code);\n"
+        "process.stdout.write(JSON.stringify(out));\n"), encoding="utf-8")
+
+    result = subprocess.run([NODE, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=120)
+
+    assert json.loads(result.stdout) == [code for code in range(0x110000) if chr(code).isspace()]
+    assert ".trim" not in source                                # no other rule for space anywhere in the script
 
 
 def test_a_guard_file_without_a_ledger_is_not_broken(tmp_path: Path) -> None:

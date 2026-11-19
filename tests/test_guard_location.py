@@ -10,7 +10,6 @@ anything for the tests.
 """
 
 import functools
-import importlib.util
 import json
 import os
 import subprocess
@@ -20,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from devcircuit import ledger as ledger_commands
-from test_ledger_hook import HOOK as PYTHON_HOOK
+from test_ledger_hook import hook_module as python_hook
 from test_pi_hook import NODE, run_sessions
 
 # Where all three agree, from the top of a working tree (or of a plain folder).
@@ -221,14 +220,6 @@ def layouts(tmp_path_factory) -> Layouts:
     return build(base)
 
 
-@functools.lru_cache(maxsize=None)
-def python_hook():
-    spec = importlib.util.spec_from_file_location("ledger_guard_under_test", PYTHON_HOOK)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def commands_guard(start: Path) -> Path | None:
     """The guard.json the ledger commands read for `--project start`."""
     guard = ledger_commands._home(start) / ledger_commands.GUARD
@@ -290,6 +281,77 @@ def test_the_pi_hook_guards_through_the_same_guard_file(layouts: Layouts, name: 
     # A relative path in a call starts at the folder that answered, wherever below it the session sits; the
     # Python hook's session root is compared in the two tests above.
     assert relative == ([True] if row.hooks else [])
+
+
+def out_of_sight(folder: Path, monkeypatch) -> None:
+    """Make looking at anything in `folder` fail the way it does for a process without permission there.
+
+    os.stat raises PermissionError on every version; Path.is_file() passes it on from Python 3.10 to 3.13 and
+    answers False from 3.14 on. No file mode makes Windows do this, hence the stub: of the platform, not of the
+    hook, as test_ledger's no_looking_into.
+    """
+    real_stat, real_is_file = os.stat, Path.is_file
+
+    def hidden(path) -> bool:
+        try:
+            path = Path(os.fspath(path))
+        except TypeError:                                      # a file descriptor, or bytes
+            return False
+        return path == folder or folder in path.parents
+
+    def stat(path, *args, **kwargs):
+        if hidden(path):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    def is_file(self, *args, **kwargs):
+        if hidden(self):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_is_file(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(Path, "is_file", is_file)
+
+
+def guarded_below_a_hidden_folder(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    """(guard.json, its ledger, the session folder, the folder in between that cannot be looked into)."""
+    guard = tmp_path / "app" / ".dev-circuit" / "guard.json"
+    ledger = tmp_path / "ledgers" / "app"
+    guard.parent.mkdir(parents=True)
+    guard.write_text(json.dumps({"ledger": str(ledger)}), encoding="utf-8")
+    session = tmp_path / "app" / "sub" / "deeper"
+    session.mkdir(parents=True)
+    return guard, ledger, session, tmp_path / "app" / "sub"
+
+
+def test_a_folder_on_the_way_up_that_cannot_be_looked_into_is_passed_by(tmp_path: Path, monkeypatch) -> None:
+    # Each folder on the way up was asked with Path.is_file(): on 3.10 to 3.13 a traceback and exit 1, which
+    # Claude Code takes for "let the call through". What cannot be looked at is taken for not there, as the pi
+    # hook takes it and Python 3.14 does.
+    guard, ledger, session, hidden = guarded_below_a_hidden_folder(tmp_path)
+    out_of_sight(hidden, monkeypatch)
+    hook = python_hook()
+
+    config, config_root, session_root = hook.find_config(str(session))
+
+    assert same(config, guard) and same(config_root, guard.parent.parent) and same(session_root, config_root)
+    reason = hook.violation({"cwd": str(session), "tool_name": "Read",
+                             "tool_input": {"file_path": str(ledger / "entries" / "x.md")}})
+    assert reason and "账本边界" in reason
+    assert hook.violation({"cwd": str(session), "tool_name": "Bash", "tool_input": {"command": "pytest -q"}}) is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_pi_hook_passes_by_such_a_folder_too(tmp_path: Path) -> None:
+    # Its stat calls sit in a try already; this keeps them there: tool_call answers an exception from loading
+    # guard.json by letting the call through.
+    guard, ledger, session, hidden = guarded_below_a_hidden_folder(tmp_path)
+    cases = [["read", {"path": str(ledger / "entries" / "x.md")}], ["bash", {"command": "pytest -q"}]]
+
+    [answer] = run_sessions(tmp_path, [(session, cases)], out_of_sight=(hidden,))
+
+    assert [result is not None and result["block"] is True for result in answer["results"]] == [True, False]
+    assert answer["notes"] == []
 
 
 @pytest.mark.parametrize("name", ["main-top", "wt-outside", "wt-inside"])
