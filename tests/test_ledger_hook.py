@@ -234,8 +234,8 @@ def newer_than_38(source: str) -> list[str]:
 
     ast.parse(feature_version=(3, 8)) turns down match and a few later statements, and on 3.12 and later reads
     the rest of the newer grammar without a word: parenthesized `with`, any expression as a decorator, `:=` in an
-    index or a set, `*` in an index, and f-strings that reuse their own quotes or hold a backslash or `#` in a
-    replacement field. The tree and the tokens are looked at for those. Of what fails only as it runs: `|` with a
+    index or a set, `*` in an index, and f-strings that reuse their own quotes or hold a backslash or a comment in
+    a replacement field. The tree and the tokens are looked at for those. Of what fails only as it runs: `|` with a
     type, None or a dict on one side, generics such as tuple[str, ...], zip(strict=), and the names above. `|`
     between two variables that hold dicts cannot be seen here. Annotations are left out: the future import, which
     the test asserts, keeps them text.
@@ -322,7 +322,8 @@ def newer_than_38(source: str) -> list[str]:
             found.append(f"{node.lineno}: import")
     if sys.version_info >= (3, 12):
         # Before 3.12 an f-string was first read as a plain string, then its replacement fields as code: one of
-        # its own quotes ended it, and a backslash or # in a field was an error. From 3.12 on, tokens show it.
+        # its own quotes ended it, a backslash anywhere in a field was an error, and so was a # outside the strings
+        # there (a comment); a # inside a string in a field was fine. From 3.12 on, tokens show it.
         strings = []                                            # [quotes, braces open] of each f-string a token is in
         for token in tokens:
             holding = [quotes for quotes, braces in strings if braces]   # the f-strings whose field holds the token
@@ -338,8 +339,8 @@ def newer_than_38(source: str) -> list[str]:
             elif token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE):
                 # an f-string's own text, format specs included, is its own: what counts is the fields it is in
                 outer = holding if token.type == tokenize.STRING else [quotes for quotes, _ in strings[:-1]]
-                if outer and (any(quotes in token.string for quotes in outer) or {"\\", "#"} & set(token.string)):
-                    found.append(f"{token.start[0]}: a quote, backslash or # in an f-string's field (3.12)")
+                if outer and (any(quotes in token.string for quotes in outer) or "\\" in token.string):
+                    found.append(f"{token.start[0]}: a quote or backslash in an f-string's field (3.12)")
             elif token.type == tokenize.COMMENT and holding:
                 found.append(f"{token.start[0]}: a comment in an f-string's field (3.12)")
     return found
@@ -396,7 +397,6 @@ NEWER_THAN_38 = (
     ("3.12", 'f"{"a"}"\n'),
     ("3.12", "f\"{f'{\"a\"}'}\"\n"),
     ("3.12", "f\"{'\\n'}\"\n"),
-    ("3.12", "f\"{'#'}\"\n"),
     ("3.12", 'f"""{a  # note\n}"""\n'),
 )
 # Close to those, and fine on 3.8.
@@ -411,6 +411,9 @@ FINE_ON_38 = (
     "a[f(*b)]\n",
     "a = b | c\n",
     "f\"{'a'}\"\n",
+    # Before 3.12 a backslash anywhere in a field was an error, a # only outside the strings there: CPython 3.10
+    # on CI reads this one with feature_version=(3, 8), and 3.8 and 3.9 share that parser.
+    "f\"{'#'}\"\n",
     'f"""{"a"}"""\n',
     'f"{a:#x}"\n',
     "from __future__ import annotations\ndef f(a: str | None) -> tuple[str, ...]:\n    b: list[int] = []\n",

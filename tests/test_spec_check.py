@@ -382,12 +382,12 @@ def test_git_is_asked_once_and_only_for_a_folder_with_a_dot_git_that_git_accepts
 def _unreadable(path: Path):
     """Make a file impossible to open the way each system can: held by a process, or without permission."""
     if os.name == "nt":
-        import _winapi
-        handle = _winapi.CreateFile(str(path), _winapi.GENERIC_READ, 0, 0, _winapi.OPEN_EXISTING, 0, 0)
-        try:
+        # Locked by this process rather than opened without sharing: _winapi.CreateFile is the ANSI API before
+        # Python 3.12 and cannot open a path outside the code page, and every test path here has Chinese in it.
+        import msvcrt
+        with open(path, "rb") as handle:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, max(path.stat().st_size, 1))
             yield
-        finally:
-            _winapi.CloseHandle(handle)
     else:
         if os.geteuid() == 0:
             pytest.skip("root can read any file")
