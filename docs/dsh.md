@@ -86,7 +86,7 @@ clawhub login
 clawhub skill publish ./skills/dev-circuit-ultra `
   --slug dev-circuit-ultra `
   --name "Dev-circuit-ultra" `
-  --version 0.7.1 `
+  --version 0.8.0 `
   --categories development `
   --topics "agent-skills,workflow,design,code-review,deepseek-harness"
 ```
